@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/api_exception.dart';
 import '../../core/widgets/dialogs.dart';
+import '../../data/models/org.dart';
 import '../../data/models/outbox.dart';
 import '../../data/repositories/bootstrap_repository.dart';
+import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/outbox_repository.dart';
 import '../../data/repositories/session.dart';
 import '../../data/repositories/shift_repository.dart';
@@ -44,11 +46,34 @@ class _RegisterSelectScreenState extends ConsumerState<RegisterSelectScreen> {
   }
 
   Future<void> _create() async {
-    final name = await promptText(context, title: 'New register', hint: 'e.g. Front Counter', confirmLabel: 'Create');
-    if (name == null || !mounted) return;
+    if (ref.read(bootstrapProvider).warehouses.isEmpty) await _refresh();
+    if (!mounted) return;
+    final result = await showDialog<({String name, String warehouseId})>(
+      context: context,
+      builder: (_) => _RegisterDialog(warehouses: ref.read(bootstrapProvider).warehouses),
+    );
+    if (result == null || !mounted) return;
     try {
-      await ref.read(apiClientProvider).post('/api/pos/registers', data: {'name': name});
+      await ref.read(apiClientProvider).post('/api/pos/registers', data: {'name': result.name, 'warehouseId': result.warehouseId});
       await _refresh();
+    } catch (e) {
+      if (mounted) showMessage(context, errorMessage(e), error: true);
+    }
+  }
+
+  Future<void> _changeLocation(Register r) async {
+    if (ref.read(bootstrapProvider).warehouses.isEmpty) await _refresh();
+    if (!mounted) return;
+    final result = await showDialog<({String name, String warehouseId})>(
+      context: context,
+      builder: (_) => _RegisterDialog(warehouses: ref.read(bootstrapProvider).warehouses, register: r),
+    );
+    if (result == null || !mounted) return;
+    try {
+      await ref.read(apiClientProvider).patch('/api/pos/registers/${r.id}', data: {'name': result.name, 'warehouseId': result.warehouseId});
+      await _refresh();
+      if (r.id == ref.read(sessionProvider).registerId) await ref.read(catalogProvider.notifier).sync(full: true);
+      if (mounted) showMessage(context, '${result.name} updated.');
     } catch (e) {
       if (mounted) showMessage(context, errorMessage(e), error: true);
     }
@@ -103,10 +128,20 @@ class _RegisterSelectScreenState extends ConsumerState<RegisterSelectScreen> {
                       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                       leading: const CircleAvatar(child: Icon(Icons.point_of_sale)),
                       title: Text(r.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text([r.code, if (r.warehouseName != null) r.warehouseName!].join(' · ')),
-                      trailing: r.id == active
-                          ? Chip(label: const Text('Register Active'), avatar: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary))
-                          : const Icon(Icons.chevron_right),
+                      subtitle: Text([
+                        r.code,
+                        if (r.warehouseName != null) r.warehouseName!,
+                        if (r.warehouseAddress != null && r.warehouseAddress != r.warehouseName) r.warehouseAddress!,
+                      ].join(' · ')),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(tooltip: 'Name & stock location', icon: const Icon(Icons.edit_location_alt_outlined), onPressed: () => _changeLocation(r)),
+                          r.id == active
+                              ? Chip(label: const Text('Register Active'), avatar: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary))
+                              : const Icon(Icons.chevron_right),
+                        ],
+                      ),
                       onTap: () => _select(r.id),
                     ),
                   ),
@@ -118,6 +153,83 @@ class _RegisterSelectScreenState extends ConsumerState<RegisterSelectScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Name plus the stock location (warehouse) a register sells from; its stock and address follow that location.
+class _RegisterDialog extends StatefulWidget {
+  const _RegisterDialog({required this.warehouses, this.register});
+
+  final List<WarehouseInfo> warehouses;
+  final Register? register;
+
+  @override
+  State<_RegisterDialog> createState() => _RegisterDialogState();
+}
+
+class _RegisterDialogState extends State<_RegisterDialog> {
+  late final _name = TextEditingController(text: widget.register?.name ?? '');
+  late String? _warehouseId = widget.warehouses.any((w) => w.id == widget.register?.warehouseId) ? widget.register!.warehouseId : null;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    if (name.isEmpty) return setState(() => _error = 'Enter a register name');
+    if (_warehouseId == null) return setState(() => _error = 'Choose the stock location this register sells from');
+    Navigator.pop(context, (name: name, warehouseId: _warehouseId!));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.register == null ? 'New register' : 'Edit ${widget.register!.name}'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _name,
+              autofocus: widget.register == null,
+              decoration: const InputDecoration(labelText: 'Register name', hintText: 'e.g. Front Counter'),
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 16),
+            if (widget.warehouses.isEmpty)
+              const Text('No stock locations found. Add a warehouse in Zaam ERP → Inventory first.')
+            else
+              DropdownButtonFormField<String>(
+                initialValue: _warehouseId,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Stock location', helperText: 'Stock, products on hand and the receipt address come from here'),
+                items: [
+                  for (final w in widget.warehouses)
+                    DropdownMenuItem(
+                      value: w.id,
+                      child: Text(w.address != null && w.address != w.name ? '${w.name} · ${w.address}' : w.name, overflow: TextOverflow.ellipsis),
+                    ),
+                ],
+                onChanged: (v) => setState(() {
+                  _warehouseId = v;
+                  _error = null;
+                }),
+              ),
+            if (_error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: widget.warehouses.isEmpty ? null : _submit, child: Text(widget.register == null ? 'Create' : 'Save')),
+      ],
     );
   }
 }

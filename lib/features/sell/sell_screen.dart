@@ -26,6 +26,7 @@ import 'cart_controller.dart';
 import 'payment_screen.dart';
 import 'sell_actions.dart';
 import 'widgets/cart_panel.dart';
+import 'widgets/category_bar.dart';
 import 'widgets/product_grid.dart';
 
 class SellScreen extends ConsumerStatefulWidget {
@@ -264,23 +265,10 @@ class _SellScreenState extends ConsumerState<SellScreen> {
             ],
           ),
         ),
-        SizedBox(
-          height: 48,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(label: const Text('All'), selected: _category == null, onSelected: (_) => setState(() => _category = null)),
-              ),
-              for (final c in catalog.categories)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(label: Text(c), selected: _category == c, onSelected: (_) => setState(() => _category = _category == c ? null : c)),
-                ),
-            ],
-          ),
+        CategoryBar(
+          categories: catalog.categories,
+          selected: _category,
+          onSelected: (c) => setState(() => _category = c),
         ),
         Expanded(
           child: !catalog.loaded

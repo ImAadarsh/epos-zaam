@@ -48,7 +48,12 @@ Future<void> addProductToCart(BuildContext context, WidgetRef ref, Product produ
     showMessage(context, '${chosen.displayName} is marked unavailable (Manage Availability).', error: true);
     return;
   }
-  if (settings.outOfStockPrompt && chosen.outOfStock) {
+  final stockProblem = cart.stockProblem(chosen, quantity);
+  if (stockProblem != null) {
+    showMessage(context, stockProblem, error: true);
+    return;
+  }
+  if (settings.sellBeyondStock && settings.outOfStockPrompt && chosen.outOfStock) {
     final ok = await confirm(context, title: 'Out of stock', message: '${chosen.displayName} shows ${chosen.stock ?? 0} in stock. Sell it anyway?', confirmLabel: 'Sell anyway');
     if (!ok || !context.mounted) return;
   }
@@ -79,7 +84,8 @@ Future<void> addProductToCart(BuildContext context, WidgetRef ref, Product produ
     if (!context.mounted) return;
   }
 
-  cart.add(chosen, quantity: quantity, modifiers: modifiers, note: note);
+  final error = cart.add(chosen, quantity: quantity, modifiers: modifiers, note: note);
+  if (error != null && context.mounted) showMessage(context, error, error: true);
 }
 
 /// Applies a discount to the whole cart, asking for approval above the cashier limit.
@@ -138,11 +144,20 @@ class _LineEditor extends ConsumerWidget {
                   onTap: () async {
                     final q = await promptText(context, title: 'Quantity', initial: '${line.quantity}', keyboardType: TextInputType.number, confirmLabel: 'Set');
                     final n = int.tryParse(q ?? '');
-                    if (n != null) ctrl.setQuantity(line.id, n);
+                    if (n == null) return;
+                    final error = ctrl.setQuantity(line.id, n);
+                    if (error != null && context.mounted) showMessage(context, error, error: true);
                   },
                   child: SizedBox(width: 64, child: Text('${line.quantity}', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall)),
                 ),
-                IconButton.filledTonal(iconSize: 28, onPressed: () => ctrl.increment(line.id, 1), icon: const Icon(Icons.add)),
+                IconButton.filledTonal(
+                  iconSize: 28,
+                  onPressed: () {
+                    final error = ctrl.increment(line.id, 1);
+                    if (error != null) showMessage(context, error, error: true);
+                  },
+                  icon: const Icon(Icons.add),
+                ),
               ],
             ),
             const SizedBox(height: 12),

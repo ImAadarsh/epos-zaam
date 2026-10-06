@@ -120,7 +120,7 @@ class _RefundScreenState extends ConsumerState<RefundScreen> {
       await ref.read(shiftProvider.notifier).recordRefund(_method.name, amount);
       try {
         await ref.read(printerServiceProvider).print(
-              buildRefundReceipt(sale, amountPence: amount, method: _method.label, lines: [for (final l in lines) (l.line.name, l.quantity, l.amountPence)], org: ref.read(bootstrapProvider).org),
+              buildRefundReceipt(sale, amountPence: amount, method: _method.label, lines: [for (final l in lines) (l.line.name, l.quantity, l.amountPence)], org: ref.read(receiptOrgProvider)),
               jobName: 'Refund ${sale.receiptNumber}',
             );
       } catch (_) {}

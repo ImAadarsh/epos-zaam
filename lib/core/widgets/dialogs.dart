@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../utils/money.dart';
 import 'keypad.dart';
@@ -53,6 +54,7 @@ Future<String?> promptText(
           controller: controller,
           autofocus: true,
           keyboardType: keyboardType,
+          inputFormatters: keyboardType == TextInputType.number ? [FilteringTextInputFormatter.digitsOnly] : null,
           maxLines: maxLines,
           decoration: InputDecoration(hintText: hint),
           onSubmitted: maxLines == 1 ? (v) => Navigator.pop(ctx, v.trim()) : null,

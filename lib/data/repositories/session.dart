@@ -46,6 +46,7 @@ class SessionState {
     this.registerId,
     this.staffId,
     this.locked = true,
+    this.lastActiveAt,
   });
 
   final String baseUrl;
@@ -61,6 +62,9 @@ class SessionState {
   final String? staffId;
   final bool locked;
 
+  /// Last time the unlocked till was used; drives the idle lock across reloads.
+  final DateTime? lastActiveAt;
+
   bool get isLoggedIn => accessToken != null && user != null;
 
   SessionState copyWith({
@@ -72,6 +76,7 @@ class SessionState {
     String? staffId,
     bool clearStaff = false,
     bool? locked,
+    DateTime? lastActiveAt,
   }) =>
       SessionState(
         baseUrl: baseUrl ?? this.baseUrl,
@@ -82,6 +87,7 @@ class SessionState {
         registerId: registerId ?? this.registerId,
         staffId: clearStaff ? null : (staffId ?? this.staffId),
         locked: locked ?? this.locked,
+        lastActiveAt: lastActiveAt ?? this.lastActiveAt,
       );
 
   Map<String, dynamic> toJson() => {
@@ -92,6 +98,7 @@ class SessionState {
         'registerId': registerId,
         'staffId': staffId,
         'locked': locked,
+        'lastActiveAt': lastActiveAt?.toIso8601String(),
       };
 }
 
@@ -101,6 +108,9 @@ class SessionController extends Notifier<SessionState> {
     final init = ref.read(initialDataProvider);
     final j = init.session;
     if (j == null) return SessionState(baseUrl: AppConfig.defaultApiBaseUrl, deviceId: init.deviceId);
+    final lastActive = DateTime.tryParse('${j['lastActiveAt'] ?? ''}');
+    final autoLock = (init.settings?['autoLockSeconds'] as num?)?.toInt() ?? 0;
+    final idleExpired = autoLock > 0 && (lastActive == null || DateTime.now().difference(lastActive).inSeconds >= autoLock);
     return SessionState(
       baseUrl: (j['baseUrl'] as String?) ?? AppConfig.defaultApiBaseUrl,
       deviceId: init.deviceId,
@@ -109,8 +119,9 @@ class SessionController extends Notifier<SessionState> {
       user: j['user'] is Map ? SessionUser.fromJson(Map<String, dynamic>.from(j['user'] as Map)) : null,
       registerId: j['registerId'] as String?,
       staffId: j['staffId'] as String?,
-      // Always start locked when a PIN-capable staff list exists; the lock screen decides.
-      locked: true,
+      // A reload keeps the till as it was (unlocked after sign-in) unless it was locked or idle too long.
+      locked: j['locked'] != false || j['staffId'] == null || idleExpired,
+      lastActiveAt: lastActive,
     );
   }
 
@@ -136,6 +147,7 @@ class SessionController extends Notifier<SessionState> {
       registerId: state.user?.orgId == user.orgId ? state.registerId : null,
       staffId: user.id,
       locked: false,
+      lastActiveAt: DateTime.now(),
     );
     AppLog.info('Signed in as ${user.email}');
     await _persist();
@@ -157,8 +169,16 @@ class SessionController extends Notifier<SessionState> {
   }
 
   Future<void> unlock(String staffId) async {
-    state = state.copyWith(staffId: staffId, locked: false);
+    state = state.copyWith(staffId: staffId, locked: false, lastActiveAt: DateTime.now());
     AppLog.info('Till unlocked by staff $staffId');
+    await _persist();
+  }
+
+  /// Records till activity; written at most every 30 s.
+  Future<void> touch() async {
+    final last = state.lastActiveAt;
+    if (state.locked || (last != null && DateTime.now().difference(last).inSeconds < 30)) return;
+    state = state.copyWith(lastActiveAt: DateTime.now());
     await _persist();
   }
 

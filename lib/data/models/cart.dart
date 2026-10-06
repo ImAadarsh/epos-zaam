@@ -132,6 +132,10 @@ class Cart {
   final bool allergenAsked;
 
   bool get isEmpty => lines.isEmpty;
+
+  /// True when anything (items, customer, discount, table, note) is attached to the order.
+  bool get hasContent =>
+      lines.isNotEmpty || customer != null || cartDiscount != null || tableRef != null || (note?.isNotEmpty ?? false) || parkedId != null;
   int get itemCount => lines.fold(0, (s, l) => s + l.quantity);
 
   Cart copyWith({

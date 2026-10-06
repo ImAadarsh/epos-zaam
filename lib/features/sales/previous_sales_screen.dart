@@ -35,6 +35,9 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
   _Scope _scope = _Scope.thisRegister;
   DateTime? _day;
   List<SaleSummary> _remote = [];
+  int _total = 0;
+  int _page = 0;
+  int _pageSize = 25;
   bool _loading = false;
   String? _error;
 
@@ -51,6 +54,12 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
     super.dispose();
   }
 
+  /// Reloads from the first page (filters changed).
+  Future<void> _reload() {
+    _page = 0;
+    return _load();
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -64,10 +73,15 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
         'registerId': _scope == _Scope.thisRegister ? session.registerId : null,
         'from': day == null ? null : DateTime(day.year, day.month, day.day).toUtc().toIso8601String(),
         'to': day == null ? null : DateTime(day.year, day.month, day.day, 23, 59, 59).toUtc().toIso8601String(),
-        'limit': 100,
+        'limit': _pageSize,
+        'offset': _page * _pageSize,
       }) as Map);
       if (!mounted) return;
-      setState(() => _remote = ((res['items'] as List?) ?? []).map((e) => SaleSummary.fromServer(Map<String, dynamic>.from(e as Map))).toList());
+      final items = ((res['items'] as List?) ?? []).map((e) => SaleSummary.fromServer(Map<String, dynamic>.from(e as Map))).toList();
+      setState(() {
+        _remote = items;
+        _total = (res['total'] as num?)?.toInt() ?? (_page * _pageSize + items.length);
+      });
     } catch (e) {
       if (mounted) setState(() => _error = (e is ApiException && e.isNetwork) ? 'Offline: showing sales made on this device.' : errorMessage(e));
     } finally {
@@ -75,7 +89,9 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
     }
   }
 
+  /// Device-only (unsynced/offline) sales are shown on the first page, above server results.
   List<SaleSummary> _merged(List<SaleRecord> local) {
+    if (_page > 0 && _error == null) return _remote;
     final q = _search.text.trim().toLowerCase();
     final session = ref.read(sessionProvider);
     final remoteNumbers = _remote.map((r) => r.receiptNumber).toSet();
@@ -131,7 +147,7 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
                               final c = await scanWithCamera(context, title: 'Scan receipt');
                               if (c != null) {
                                 _search.text = c;
-                                _load();
+                                _reload();
                               }
                             },
                           )
@@ -139,9 +155,9 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
                   ),
                   onChanged: (_) {
                     _debounce?.cancel();
-                    _debounce = Timer(const Duration(milliseconds: 400), _load);
+                    _debounce = Timer(const Duration(milliseconds: 400), _reload);
                   },
-                  onSubmitted: (_) => _load(),
+                  onSubmitted: (_) => _reload(),
                 ),
               ),
             ]),
@@ -155,7 +171,7 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
                 selected: {_scope},
                 onSelectionChanged: (s) {
                   setState(() => _scope = s.first);
-                  _load();
+                  _reload();
                 },
               ),
               const SizedBox(width: 8),
@@ -166,14 +182,14 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
                   final d = await showDatePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime.now(), initialDate: _day ?? DateTime.now());
                   if (d != null) {
                     setState(() => _day = d);
-                    _load();
+                    _reload();
                   }
                 },
                 onDeleted: _day == null
                     ? null
                     : () {
                         setState(() => _day = null);
-                        _load();
+                        _reload();
                       },
               ),
             ]),
@@ -238,7 +254,91 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
                     ),
             ),
           ),
+          if (_error == null && _total > 0)
+            _Pager(
+              page: _page,
+              pageSize: _pageSize,
+              total: _total,
+              loading: _loading,
+              onPage: (p) {
+                setState(() => _page = p);
+                _load();
+              },
+              onPageSize: (size) {
+                setState(() => _pageSize = size);
+                _reload();
+              },
+            ),
         ],
+      ),
+    );
+  }
+}
+
+/// "Showing 26–50 of 312" with page size and numbered page buttons.
+class _Pager extends StatelessWidget {
+  const _Pager({required this.page, required this.pageSize, required this.total, required this.loading, required this.onPage, required this.onPageSize});
+
+  final int page;
+  final int pageSize;
+  final int total;
+  final bool loading;
+  final ValueChanged<int> onPage;
+  final ValueChanged<int> onPageSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final pages = (total / pageSize).ceil().clamp(1, 1 << 30);
+    final from = page * pageSize + 1;
+    final to = ((page + 1) * pageSize).clamp(0, total);
+    final start = (page - 2).clamp(0, (pages - 5).clamp(0, pages));
+    final numbers = [for (var i = start; i < (start + 5).clamp(0, pages); i++) i];
+    void go(int p) {
+      if (!loading && p >= 0 && p < pages && p != page) onPage(p);
+    }
+
+    Widget pageButton(int p) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: p == page
+                ? FilledButton(onPressed: null, style: FilledButton.styleFrom(padding: EdgeInsets.zero), child: Text('${p + 1}'))
+                : OutlinedButton(onPressed: loading ? null : () => go(p), style: OutlinedButton.styleFrom(padding: EdgeInsets.zero), child: Text('${p + 1}')),
+          ),
+        );
+
+    return Material(
+      color: theme.colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: 8,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('Showing $from–$to of $total'),
+              const SizedBox(width: 16),
+              const Text('Rows'),
+              const SizedBox(width: 8),
+              DropdownButton<int>(
+                value: pageSize,
+                underline: const SizedBox.shrink(),
+                items: const [10, 25, 50, 100].map((n) => DropdownMenuItem(value: n, child: Text('$n'))).toList(),
+                onChanged: loading ? null : (v) => v == null ? null : onPageSize(v),
+              ),
+            ]),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              IconButton(tooltip: 'First page', onPressed: page > 0 && !loading ? () => go(0) : null, icon: const Icon(Icons.first_page)),
+              IconButton(tooltip: 'Previous page', onPressed: page > 0 && !loading ? () => go(page - 1) : null, icon: const Icon(Icons.chevron_left)),
+              for (final p in numbers) pageButton(p),
+              IconButton(tooltip: 'Next page', onPressed: page < pages - 1 && !loading ? () => go(page + 1) : null, icon: const Icon(Icons.chevron_right)),
+              IconButton(tooltip: 'Last page', onPressed: page < pages - 1 && !loading ? () => go(pages - 1) : null, icon: const Icon(Icons.last_page)),
+            ]),
+          ],
+        ),
       ),
     );
   }

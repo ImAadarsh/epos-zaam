@@ -1,9 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import 'camera_release_stub.dart' if (dart.library.js_interop) 'camera_release_web.dart';
+
 bool get cameraScanSupported =>
     kIsWeb || defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.macOS;
+
+/// Retail product barcodes plus QR (tables, customers, receipts).
+const _scanFormats = [
+  BarcodeFormat.ean13,
+  BarcodeFormat.ean8,
+  BarcodeFormat.upcA,
+  BarcodeFormat.upcE,
+  BarcodeFormat.code128,
+  BarcodeFormat.code39,
+  BarcodeFormat.itf14,
+  BarcodeFormat.qrCode,
+];
 
 /// Opens the camera and returns the first barcode / QR code read, or null.
 Future<String?> scanWithCamera(BuildContext context, {String title = 'Scan barcode'}) async {
@@ -13,7 +29,24 @@ Future<String?> scanWithCamera(BuildContext context, {String title = 'Scan barco
     );
     return null;
   }
-  return Navigator.of(context).push<String>(MaterialPageRoute(fullscreenDialog: true, builder: (_) => _CameraScanPage(title: title)));
+  final result = await Navigator.of(context).push<String>(MaterialPageRoute(fullscreenDialog: true, builder: (_) => _CameraScanPage(title: title)));
+  releaseAllCameras();
+  return result;
+}
+
+/// EAN-8/EAN-13/UPC-A check digit; other formats pass through.
+bool _checksumOk(Barcode b) {
+  final v = b.rawValue ?? '';
+  final isEanUpc = b.format == BarcodeFormat.ean13 || b.format == BarcodeFormat.ean8 || b.format == BarcodeFormat.upcA;
+  if (!isEanUpc || !RegExp(r'^\d{8}$|^\d{12,13}$').hasMatch(v)) return true;
+  final digits = v.split('').map(int.parse).toList();
+  final check = digits.removeLast();
+  var sum = 0;
+  for (var i = 0; i < digits.length; i++) {
+    final fromRight = digits.length - i;
+    sum += digits[i] * (fromRight.isOdd ? 3 : 1);
+  }
+  return (10 - sum % 10) % 10 == check;
 }
 
 class _CameraScanPage extends StatefulWidget {
@@ -25,21 +58,67 @@ class _CameraScanPage extends StatefulWidget {
 }
 
 class _CameraScanPageState extends State<_CameraScanPage> {
-  final _controller = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
+  final _controller = MobileScannerController(
+    autoStart: false,
+    detectionSpeed: DetectionSpeed.noDuplicates,
+    formats: _scanFormats,
+  );
+  Future<void>? _starting;
   bool _done = false;
 
   @override
+  void initState() {
+    super.initState();
+    _starting = _controller.start().catchError((_) {});
+  }
+
+  @override
   void dispose() {
-    _controller.dispose();
+    final controller = _controller;
+    final starting = _starting;
+    // Wait for a start still in progress, otherwise its stream outlives the page.
+    unawaited(() async {
+      await starting;
+      try {
+        await controller.stop();
+      } catch (_) {}
+      await controller.dispose();
+      releaseAllCameras();
+    }());
     super.dispose();
   }
 
   void _onDetect(BarcodeCapture capture) {
     if (_done) return;
-    final value = capture.barcodes.map((b) => b.rawValue).whereType<String>().where((v) => v.trim().isNotEmpty).firstOrNull;
-    if (value == null) return;
+    final barcode = capture.barcodes.where((b) => (b.rawValue ?? '').trim().isNotEmpty && _checksumOk(b)).firstOrNull;
+    if (barcode == null) return;
     _done = true;
-    Navigator.of(context).pop(value.trim());
+    Navigator.of(context).pop(barcode.rawValue!.trim());
+  }
+
+  Future<void> _typeCode() async {
+    final ctrl = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter barcode'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(hintText: 'e.g. 5012345678900'),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: const Text('Use code')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (!mounted || code == null || code.isEmpty || _done) return;
+    _done = true;
+    Navigator.of(context).pop(code);
   }
 
   @override
@@ -51,7 +130,8 @@ class _CameraScanPageState extends State<_CameraScanPage> {
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(tooltip: 'Torch', icon: const Icon(Icons.flashlight_on_outlined), onPressed: () => _controller.toggleTorch()),
+          IconButton(tooltip: 'Type code', icon: const Icon(Icons.keyboard_outlined), onPressed: _typeCode),
+          if (!kIsWeb) IconButton(tooltip: 'Torch', icon: const Icon(Icons.flashlight_on_outlined), onPressed: () => _controller.toggleTorch()),
           IconButton(tooltip: 'Switch camera', icon: const Icon(Icons.cameraswitch_outlined), onPressed: () => _controller.switchCamera()),
         ],
       ),
@@ -72,10 +152,20 @@ class _CameraScanPageState extends State<_CameraScanPage> {
           IgnorePointer(
             child: Center(
               child: Container(
-                width: 260,
-                height: 180,
+                width: 300,
+                height: 160,
                 decoration: BoxDecoration(border: Border.all(color: const Color(0xFFD4A017), width: 3), borderRadius: BorderRadius.circular(16)),
               ),
+            ),
+          ),
+          const Positioned(
+            left: 16,
+            right: 16,
+            bottom: 32,
+            child: Text(
+              'Hold the barcode flat, 10–20 cm from the camera, filling the box. Avoid glare.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
             ),
           ),
         ],

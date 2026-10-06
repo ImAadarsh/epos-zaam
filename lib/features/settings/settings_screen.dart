@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/hardware/printer/printer_service.dart';
+import '../../core/scanner/scan_bus.dart';
+import '../../core/scanner/socket_scanner.dart';
 import '../../core/sync/sync_service.dart';
 import '../../core/widgets/dialogs.dart';
 import '../../data/models/settings.dart';
@@ -21,6 +25,7 @@ class SettingsScreen extends ConsumerWidget {
     final session = ref.watch(sessionProvider);
     final register = ref.watch(currentRegisterProvider);
     final theme = Theme.of(context);
+    final socket = ref.watch(socketScannerProvider);
     void set(PosSettings Function(PosSettings) f) => ctrl.update(f);
 
     Widget header(String t) => Padding(
@@ -95,7 +100,9 @@ class SettingsScreen extends ConsumerWidget {
                 toggle('Eat in / take away', s.eatInTakeAway, (v) => set((x) => x.copyWith(eatInTakeAway: v))),
                 toggle('Enter float after closing register', s.floatAfterClose, (v) => set((x) => x.copyWith(floatAfterClose: v))),
                 toggle('Allergen popup', s.allergenPopup, (v) => set((x) => x.copyWith(allergenPopup: v)), subtitle: 'Ask about allergies on the first item of each sale'),
-                toggle('Out-of-stock prompt', s.outOfStockPrompt, (v) => set((x) => x.copyWith(outOfStockPrompt: v))),
+                toggle('Sell beyond stock', s.sellBeyondStock, (v) => set((x) => x.copyWith(sellBeyondStock: v)),
+                    subtitle: 'Off: a sale can never hold more units than this register has in stock'),
+                if (s.sellBeyondStock) toggle('Out-of-stock prompt', s.outOfStockPrompt, (v) => set((x) => x.copyWith(outOfStockPrompt: v))),
                 toggle('QR scanner after order', s.qrAfterOrder, (v) => set((x) => x.copyWith(qrAfterOrder: v))),
                 toggle('Table QR button', s.tableQrButton, (v) => set((x) => x.copyWith(tableQrButton: v))),
                 toggle('Table timers', s.tableTimers, (v) => set((x) => x.copyWith(tableTimers: v)), subtitle: 'Show how long saved sales have been open'),
@@ -182,6 +189,55 @@ class SettingsScreen extends ConsumerWidget {
                   },
                 ),
               ]),
+              header('Barcode scanner'),
+              card([
+                const ListTile(
+                  leading: Icon(Icons.qr_code_scanner),
+                  title: Text('Socket Mobile S700 / USB scanners (Basic mode)'),
+                  subtitle: Text('Pair the scanner in this device\'s Bluetooth settings (it appears as a keyboard). '
+                      'Scans go straight into the till, on the web app and installed app alike. No setup needed here.'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.bug_report_outlined),
+                  title: const Text('Test scanner'),
+                  subtitle: const Text('Scan any barcode to check it reaches the till'),
+                  onTap: () => showDialog<void>(context: context, builder: (_) => const _ScanTestDialog()),
+                ),
+                if (socketCaptureAvailable) ...[
+                  const Divider(),
+                  toggle('Socket Mobile Application mode', s.socketCaptureEnabled, (v) => set((x) => x.copyWith(socketCaptureEnabled: v)),
+                      subtitle: 'Uses CaptureJS + Socket Mobile Companion (Windows/Android) or the Rumba browser (iOS). '
+                          'Keeps the on-screen keyboard and works whatever field has focus.'),
+                  if (s.socketCaptureEnabled) ...[
+                    ListTile(
+                      title: const Text('App ID'),
+                      subtitle: Text(s.socketAppId.isEmpty ? 'Not set' : s.socketAppId),
+                      onTap: () => editText('App ID (e.g. web:epos.zaamaitech.co.uk)', s.socketAppId, (v) => set((x) => x.copyWith(socketAppId: v.trim()))),
+                    ),
+                    ListTile(
+                      title: const Text('Developer ID'),
+                      subtitle: Text(s.socketDeveloperId.isEmpty ? 'Not set' : s.socketDeveloperId),
+                      onTap: () => editText('Developer ID', s.socketDeveloperId, (v) => set((x) => x.copyWith(socketDeveloperId: v.trim()))),
+                    ),
+                    ListTile(
+                      title: const Text('AppKey'),
+                      subtitle: Text(s.socketAppKey.isEmpty ? 'Not set' : 'Saved'),
+                      onTap: () => editText('AppKey', s.socketAppKey, (v) => set((x) => x.copyWith(socketAppKey: v.trim())), secret: true),
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        socket.state == SocketScannerState.connected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+                        color: socket.state == SocketScannerState.connected
+                            ? Colors.green
+                            : (socket.state == SocketScannerState.error || socket.state == SocketScannerState.noService ? theme.colorScheme.error : null),
+                      ),
+                      title: Text(socket.label),
+                      subtitle: socket.lastScan == null ? (socket.detail.isEmpty || socket.state == SocketScannerState.error ? null : Text(socket.detail)) : Text('Last scan: ${socket.lastScan}'),
+                      trailing: TextButton(onPressed: () => ref.read(socketScannerProvider.notifier).retry(), child: const Text('Reconnect')),
+                    ),
+                  ],
+                ],
+              ]),
               header('Appearance'),
               card([
                 ListTile(
@@ -232,6 +288,61 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Shows each scan as it arrives, from any scanner source.
+class _ScanTestDialog extends ConsumerStatefulWidget {
+  const _ScanTestDialog();
+
+  @override
+  ConsumerState<_ScanTestDialog> createState() => _ScanTestDialogState();
+}
+
+class _ScanTestDialogState extends ConsumerState<_ScanTestDialog> {
+  final _scans = <ScanEvent>[];
+  late final StreamSubscription<ScanEvent> _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = ref.read(scanBusProvider).stream.listen((e) => setState(() => _scans.insert(0, e)));
+  }
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Test scanner'),
+      content: SizedBox(
+        width: 380,
+        height: 220,
+        child: _scans.isEmpty
+            ? const Center(child: Text('Scan a barcode now…', textAlign: TextAlign.center))
+            : ListView(
+                children: [
+                  for (final e in _scans)
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.check_circle, color: Colors.green),
+                      title: Text(e.code, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Text(switch (e.source) {
+                        ScanSource.socketMobile => 'Socket Mobile (Application mode)',
+                        ScanSource.keyboardWedge => 'Scanner (Basic / HID mode)',
+                        ScanSource.camera => 'Camera',
+                        ScanSource.manual => 'Typed',
+                      }),
+                    ),
+                ],
+              ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Done'))],
     );
   }
 }

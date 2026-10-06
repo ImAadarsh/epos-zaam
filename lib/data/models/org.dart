@@ -23,6 +23,17 @@ class OrgInfo {
         address: j['address'] as String?,
       );
 
+  OrgInfo withAddress(String? value) => OrgInfo(
+        name: name,
+        legalName: legalName,
+        vatNumber: vatNumber,
+        phone: phone,
+        email: email,
+        website: website,
+        logoUrl: logoUrl,
+        address: value,
+      );
+
   Map<String, dynamic> toJson() => {
         'name': name,
         'legalName': legalName,
@@ -36,13 +47,25 @@ class OrgInfo {
 }
 
 class Register {
-  const Register({required this.id, required this.name, required this.code, this.warehouseId, this.warehouseName, this.receiptPrefix, this.settings = const {}});
+  const Register({
+    required this.id,
+    required this.name,
+    required this.code,
+    this.warehouseId,
+    this.warehouseName,
+    this.warehouseAddress,
+    this.receiptPrefix,
+    this.settings = const {},
+  });
 
   final String id;
   final String name;
   final String code;
   final String? warehouseId;
   final String? warehouseName;
+
+  /// Address of the stock location; printed on this register's receipts.
+  final String? warehouseAddress;
   final String? receiptPrefix;
   final Map<String, dynamic> settings;
 
@@ -52,6 +75,7 @@ class Register {
         code: '${j['code'] ?? 'REG'}',
         warehouseId: j['warehouseId']?.toString(),
         warehouseName: j['warehouseName'] as String?,
+        warehouseAddress: j['warehouseAddress'] as String?,
         receiptPrefix: j['receiptPrefix'] as String?,
         settings: j['settings'] is Map ? Map<String, dynamic>.from(j['settings'] as Map) : const {},
       );
@@ -62,9 +86,24 @@ class Register {
         'code': code,
         'warehouseId': warehouseId,
         'warehouseName': warehouseName,
+        'warehouseAddress': warehouseAddress,
         'receiptPrefix': receiptPrefix,
         'settings': settings,
       };
+}
+
+/// A stock location a register can sell from.
+class WarehouseInfo {
+  const WarehouseInfo({required this.id, required this.name, this.code, this.address});
+  final String id;
+  final String name;
+  final String? code;
+  final String? address;
+
+  factory WarehouseInfo.fromJson(Map<String, dynamic> j) =>
+      WarehouseInfo(id: '${j['id']}', name: '${j['name']}', code: j['code'] as String?, address: j['address'] as String?);
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'code': code, 'address': address};
 }
 
 enum PosRole { cashier, supervisor, manager }
@@ -143,10 +182,11 @@ class TaxCodeInfo {
 
 /// Everything returned by `GET /api/pos/bootstrap`, cached for offline starts.
 class BootstrapData {
-  const BootstrapData({this.org, this.registers = const [], this.staff = const [], this.taxCodes = const [], this.currency = 'GBP'});
+  const BootstrapData({this.org, this.registers = const [], this.warehouses = const [], this.staff = const [], this.taxCodes = const [], this.currency = 'GBP'});
 
   final OrgInfo? org;
   final List<Register> registers;
+  final List<WarehouseInfo> warehouses;
   final List<StaffMember> staff;
   final List<TaxCodeInfo> taxCodes;
   final String currency;
@@ -157,6 +197,7 @@ class BootstrapData {
   factory BootstrapData.fromJson(Map<String, dynamic> j) => BootstrapData(
         org: j['organization'] is Map ? OrgInfo.fromJson(Map<String, dynamic>.from(j['organization'] as Map)) : null,
         registers: ((j['registers'] as List?) ?? []).map((e) => Register.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
+        warehouses: ((j['warehouses'] as List?) ?? []).map((e) => WarehouseInfo.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
         staff: ((j['staff'] as List?) ?? []).map((e) => StaffMember.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
         taxCodes: ((j['taxCodes'] as List?) ?? []).map((e) => TaxCodeInfo.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
         currency: '${j['currency'] ?? 'GBP'}',
@@ -165,6 +206,7 @@ class BootstrapData {
   Map<String, dynamic> toJson() => {
         'organization': org?.toJson(),
         'registers': registers.map((r) => r.toJson()).toList(),
+        'warehouses': warehouses.map((w) => w.toJson()).toList(),
         'staff': staff.map((s) => s.toJson()).toList(),
         'taxCodes': taxCodes.map((t) => t.toJson()).toList(),
         'currency': currency,

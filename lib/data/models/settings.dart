@@ -38,6 +38,7 @@ class PosSettings {
     this.floatAfterClose = false,
     this.allergenPopup = false,
     this.outOfStockPrompt = true,
+    this.sellBeyondStock = false,
     this.qrAfterOrder = false,
     this.tableQrButton = false,
     this.tableTimers = true,
@@ -57,6 +58,10 @@ class PosSettings {
     this.gridColumns = 0,
     this.showProductImages = true,
     this.soundOnScan = true,
+    this.socketCaptureEnabled = false,
+    this.socketAppId = 'web:epos.zaamaitech.co.uk',
+    this.socketDeveloperId = '',
+    this.socketAppKey = '',
   });
 
   final bool cashEnabled;
@@ -73,6 +78,9 @@ class PosSettings {
   final bool floatAfterClose;
   final bool allergenPopup;
   final bool outOfStockPrompt;
+
+  /// When false the cart never holds more units than the register's stock.
+  final bool sellBeyondStock;
   final bool qrAfterOrder;
   final bool tableQrButton;
   final bool tableTimers;
@@ -97,6 +105,14 @@ class PosSettings {
   final bool showProductImages;
   final bool soundOnScan;
 
+  /// Socket Mobile Application mode (CaptureJS + Companion). Basic/HID mode needs no setup.
+  final bool socketCaptureEnabled;
+
+  /// CaptureJS credentials from the Socket Mobile developer portal; the AppKey is bound to [socketAppId].
+  final String socketAppId;
+  final String socketDeveloperId;
+  final String socketAppKey;
+
   PosSettings copyWith({
     bool? cashEnabled,
     bool? cashPrompt,
@@ -111,6 +127,7 @@ class PosSettings {
     bool? floatAfterClose,
     bool? allergenPopup,
     bool? outOfStockPrompt,
+    bool? sellBeyondStock,
     bool? qrAfterOrder,
     bool? tableQrButton,
     bool? tableTimers,
@@ -130,6 +147,10 @@ class PosSettings {
     int? gridColumns,
     bool? showProductImages,
     bool? soundOnScan,
+    bool? socketCaptureEnabled,
+    String? socketAppId,
+    String? socketDeveloperId,
+    String? socketAppKey,
   }) =>
       PosSettings(
         cashEnabled: cashEnabled ?? this.cashEnabled,
@@ -145,6 +166,7 @@ class PosSettings {
         floatAfterClose: floatAfterClose ?? this.floatAfterClose,
         allergenPopup: allergenPopup ?? this.allergenPopup,
         outOfStockPrompt: outOfStockPrompt ?? this.outOfStockPrompt,
+        sellBeyondStock: sellBeyondStock ?? this.sellBeyondStock,
         qrAfterOrder: qrAfterOrder ?? this.qrAfterOrder,
         tableQrButton: tableQrButton ?? this.tableQrButton,
         tableTimers: tableTimers ?? this.tableTimers,
@@ -164,6 +186,10 @@ class PosSettings {
         gridColumns: gridColumns ?? this.gridColumns,
         showProductImages: showProductImages ?? this.showProductImages,
         soundOnScan: soundOnScan ?? this.soundOnScan,
+        socketCaptureEnabled: socketCaptureEnabled ?? this.socketCaptureEnabled,
+        socketAppId: socketAppId ?? this.socketAppId,
+        socketDeveloperId: socketDeveloperId ?? this.socketDeveloperId,
+        socketAppKey: socketAppKey ?? this.socketAppKey,
       );
 
   Map<String, dynamic> toJson({bool includeSecrets = true}) => {
@@ -180,6 +206,7 @@ class PosSettings {
         'floatAfterClose': floatAfterClose,
         'allergenPopup': allergenPopup,
         'outOfStockPrompt': outOfStockPrompt,
+        'sellBeyondStock': sellBeyondStock,
         'qrAfterOrder': qrAfterOrder,
         'tableQrButton': tableQrButton,
         'tableTimers': tableTimers,
@@ -199,6 +226,10 @@ class PosSettings {
         'gridColumns': gridColumns,
         'showProductImages': showProductImages,
         'soundOnScan': soundOnScan,
+        'socketCaptureEnabled': socketCaptureEnabled,
+        'socketAppId': socketAppId,
+        'socketDeveloperId': socketDeveloperId,
+        'socketAppKey': socketAppKey,
       };
 
   factory PosSettings.fromJson(Map<String, dynamic> j) {
@@ -220,6 +251,7 @@ class PosSettings {
       floatAfterClose: b('floatAfterClose', d.floatAfterClose),
       allergenPopup: b('allergenPopup', d.allergenPopup),
       outOfStockPrompt: b('outOfStockPrompt', d.outOfStockPrompt),
+      sellBeyondStock: b('sellBeyondStock', d.sellBeyondStock),
       qrAfterOrder: b('qrAfterOrder', d.qrAfterOrder),
       tableQrButton: b('tableQrButton', d.tableQrButton),
       tableTimers: b('tableTimers', d.tableTimers),
@@ -239,6 +271,10 @@ class PosSettings {
       gridColumns: i('gridColumns', d.gridColumns),
       showProductImages: b('showProductImages', d.showProductImages),
       soundOnScan: b('soundOnScan', d.soundOnScan),
+      socketCaptureEnabled: b('socketCaptureEnabled', d.socketCaptureEnabled),
+      socketAppId: s('socketAppId', d.socketAppId),
+      socketDeveloperId: s('socketDeveloperId', d.socketDeveloperId),
+      socketAppKey: s('socketAppKey', d.socketAppKey),
     );
   }
 }

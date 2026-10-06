@@ -41,6 +41,27 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    // The scanner plugin can lose track of a stream that finishes starting after its page closed;
+    // record every camera stream so the app can always switch the camera off.
+    (function () {
+      var md = navigator.mediaDevices;
+      if (!md || !md.getUserMedia) return;
+      var live = [];
+      var original = md.getUserMedia.bind(md);
+      md.getUserMedia = function (constraints) {
+        return original(constraints).then(function (stream) {
+          live.push(stream);
+          return stream;
+        });
+      };
+      window.zaamStopCameras = function () {
+        live.forEach(function (s) { s.getTracks().forEach(function (t) { t.stop(); }); });
+        live = [];
+      };
+    })();
+  </script>
+  <script src="socket_capture_bridge.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

@@ -32,7 +32,7 @@ class _CustomerPickerState extends ConsumerState<_CustomerPicker> {
   final _last = TextEditingController();
   final _email = TextEditingController();
   final _phone = TextEditingController();
-  bool _optIn = false;
+  bool _optIn = true;
 
   @override
   void initState() {

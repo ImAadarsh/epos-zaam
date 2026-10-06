@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/money.dart';
@@ -95,6 +96,7 @@ class _CloseRegisterScreenState extends ConsumerState<CloseRegisterScreen> {
                       TextField(
                         controller: _counts[d],
                         keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(5)],
                         textAlign: TextAlign.center,
                         style: theme.textTheme.titleMedium,
                         decoration: InputDecoration(

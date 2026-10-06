@@ -111,7 +111,7 @@ class CheckoutService {
 
   Future<void> printReceipt(SaleRecord sale, {bool copy = false}) {
     final settings = ref.read(settingsProvider);
-    final doc = buildSaleReceipt(sale, org: ref.read(bootstrapProvider).org, footer: settings.receiptFooter, copy: copy);
+    final doc = buildSaleReceipt(sale, org: ref.read(receiptOrgProvider), footer: settings.receiptFooter, copy: copy);
     return ref.read(printerServiceProvider).print(doc, jobName: 'Receipt ${sale.receiptNumber}');
   }
 

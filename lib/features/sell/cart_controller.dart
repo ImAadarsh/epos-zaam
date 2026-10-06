@@ -5,6 +5,7 @@ import '../../core/utils/ids.dart';
 import '../../data/models/cart.dart';
 import '../../data/models/catalog.dart';
 import '../../data/models/customer.dart';
+import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/initial_data.dart';
 import '../../data/repositories/settings_repository.dart';
 
@@ -27,8 +28,32 @@ class CartController extends Notifier<Cart> {
     ref.read(localDbProvider).putKv('cart', cart.toJson());
   }
 
+  /// Latest stock for [variantId] from the catalogue, or null when not tracked.
+  int? _stockOf(String variantId) => ref.read(catalogProvider).products[variantId]?.stock;
+
+  int quantityInCart(String variantId, {String? exceptLineId}) => state.lines
+      .where((l) => l.product.variantId == variantId && l.id != exceptLineId)
+      .fold(0, (s, l) => s + l.quantity);
+
+  /// Null when [extra] more units of [product] fit within stock, otherwise the reason.
+  String? stockProblem(Product product, int extra, {String? exceptLineId}) {
+    if (extra <= 0 || ref.read(settingsProvider).sellBeyondStock) return null;
+    final stock = _stockOf(product.variantId) ?? product.stock;
+    if (stock == null) return null;
+    final inCart = quantityInCart(product.variantId, exceptLineId: exceptLineId);
+    if (inCart + extra <= stock) return null;
+    if (stock <= 0) return '${product.displayName} is out of stock.';
+    final left = stock - inCart;
+    return left <= 0
+        ? 'Only $stock of ${product.displayName} in stock, all already in this sale.'
+        : 'Only $stock of ${product.displayName} in stock ($left more can be added).';
+  }
+
   /// Adds a product; plain lines of the same variant merge into one.
-  void add(Product product, {int quantity = 1, List<Modifier> modifiers = const [], String? note}) {
+  /// Returns an error message instead of adding when stock would be exceeded.
+  String? add(Product product, {int quantity = 1, List<Modifier> modifiers = const [], String? note}) {
+    final problem = stockProblem(product, quantity);
+    if (problem != null) return problem;
     final lines = [...state.lines];
     final plain = modifiers.isEmpty && (note == null || note.isEmpty);
     final idx = plain ? lines.indexWhere((l) => l.product.variantId == product.variantId && l.isPlain) : -1;
@@ -40,24 +65,37 @@ class CartController extends Notifier<Cart> {
       lines.add(CartLine(id: newId(), product: product, quantity: quantity, modifiers: modifiers, note: note));
     }
     _set(state.copyWith(lines: lines, startedAt: state.startedAt ?? DateTime.now()));
+    return null;
   }
 
   void updateLine(CartLine line) => _set(state.copyWith(lines: [for (final l in state.lines) l.id == line.id ? line : l]));
 
-  void setQuantity(String lineId, int quantity) {
+  /// Returns an error message (and leaves the line unchanged) when stock would be exceeded.
+  String? setQuantity(String lineId, int quantity) {
     if (quantity <= 0) {
       removeLine(lineId);
-      return;
+      return null;
+    }
+    final line = state.lines.where((l) => l.id == lineId).firstOrNull;
+    if (line == null) return null;
+    if (quantity > line.quantity) {
+      final problem = stockProblem(line.product, quantity, exceptLineId: lineId);
+      if (problem != null) return problem;
     }
     _set(state.copyWith(lines: [for (final l in state.lines) l.id == lineId ? l.copyWith(quantity: quantity) : l]));
+    return null;
   }
 
-  void increment(String lineId, int by) {
+  String? increment(String lineId, int by) {
     final line = state.lines.where((l) => l.id == lineId).firstOrNull;
-    if (line != null) setQuantity(lineId, line.quantity + by);
+    return line == null ? null : setQuantity(lineId, line.quantity + by);
   }
 
-  void removeLine(String lineId) => _set(state.copyWith(lines: state.lines.where((l) => l.id != lineId).toList()));
+  /// Removing the last item starts a fresh order, so its customer never carries over.
+  void removeLine(String lineId) {
+    final lines = state.lines.where((l) => l.id != lineId).toList();
+    _set(lines.isEmpty && state.parkedId == null ? const Cart() : state.copyWith(lines: lines));
+  }
 
   void setCartDiscount(Discount? discount) =>
       _set(discount == null ? state.copyWith(clearCartDiscount: true) : state.copyWith(cartDiscount: discount));

@@ -49,7 +49,7 @@ class ShiftReportScreen extends ConsumerWidget {
             icon: const Icon(Icons.print_outlined),
             onPressed: () async {
               try {
-                await ref.read(printerServiceProvider).print(buildShiftReportReceipt(r, registerName: register?.name, org: ref.read(bootstrapProvider).org), jobName: '${r.type}-read');
+                await ref.read(printerServiceProvider).print(buildShiftReportReceipt(r, registerName: register?.name, org: ref.read(receiptOrgProvider)), jobName: '${r.type}-read');
               } catch (e) {
                 if (context.mounted) showMessage(context, 'Print failed: $e', error: true);
               }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/scanner/socket_scanner.dart';
 import '../../core/sync/sync_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/widgets/brand.dart';
@@ -55,12 +56,14 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   void _resetIdle() {
     _idle?.cancel();
+    ref.read(sessionProvider.notifier).touch();
     final secs = ref.read(settingsProvider).autoLockSeconds;
     if (secs > 0) _idle = Timer(Duration(seconds: secs), () => ref.read(sessionProvider.notifier).lock());
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(socketScannerProvider);
     final index = ref.watch(shellTabProvider);
     final tabs = const [SellScreen(), PreviousSalesScreen(embedded: true), RegisterScreen(), OptionsScreen()];
     final body = IndexedStack(index: index, children: tabs);

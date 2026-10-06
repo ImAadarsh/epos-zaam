@@ -33,6 +33,13 @@ final currentRegisterProvider = Provider<Register?>((ref) {
   return ref.watch(bootstrapProvider).register(id);
 });
 
+/// Organisation details for receipts, with the current register's location address.
+final receiptOrgProvider = Provider<OrgInfo?>((ref) {
+  final org = ref.watch(bootstrapProvider).org;
+  final address = ref.watch(currentRegisterProvider)?.warehouseAddress;
+  return org == null || address == null || address.isEmpty ? org : org.withAddress(address);
+});
+
 final currentStaffProvider = Provider<StaffMember?>((ref) {
   final session = ref.watch(sessionProvider);
   final boot = ref.watch(bootstrapProvider);

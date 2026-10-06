@@ -36,7 +36,7 @@ class CartPanel extends ConsumerWidget {
   }
 
   Future<void> _clear(BuildContext context, WidgetRef ref) async {
-    if (await confirm(context, title: 'Clear this sale?', message: 'All items will be removed.', confirmLabel: 'Clear', destructive: true)) {
+    if (await confirm(context, title: 'Clear this sale?', message: 'All items, the customer and any discount will be removed.', confirmLabel: 'Clear', destructive: true)) {
       ref.read(cartProvider.notifier).clear();
     }
   }
@@ -87,7 +87,7 @@ class CartPanel extends ConsumerWidget {
                   onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SavedSalesScreen())),
                   icon: Badge(isLabelVisible: parkedCount > 0, label: Text('$parkedCount'), child: const Icon(Icons.bookmarks_outlined)),
                 ),
-                IconButton(tooltip: 'Clear sale', onPressed: cart.isEmpty ? null : () => _clear(context, ref), icon: const Icon(Icons.delete_sweep_outlined)),
+                IconButton(tooltip: 'Clear sale', onPressed: cart.hasContent ? () => _clear(context, ref) : null, icon: const Icon(Icons.delete_sweep_outlined)),
               ],
             ),
           ),
@@ -259,7 +259,14 @@ class _CartLineTile extends ConsumerWidget {
             children: [
               IconButton(visualDensity: VisualDensity.compact, onPressed: () => ctrl.increment(line.id, -1), icon: const Icon(Icons.remove_circle_outline)),
               SizedBox(width: 28, child: Text('${line.quantity}', textAlign: TextAlign.center, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700))),
-              IconButton(visualDensity: VisualDensity.compact, onPressed: () => ctrl.increment(line.id, 1), icon: const Icon(Icons.add_circle_outline)),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: () {
+                  final error = ctrl.increment(line.id, 1);
+                  if (error != null) showMessage(context, error, error: true);
+                },
+                icon: const Icon(Icons.add_circle_outline),
+              ),
               const SizedBox(width: 4),
               Expanded(
                 child: Column(
