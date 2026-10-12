@@ -79,6 +79,26 @@ class _RegisterSelectScreenState extends ConsumerState<RegisterSelectScreen> {
     }
   }
 
+  Future<void> _delete(Register r) async {
+    final ok = await confirm(context,
+        title: 'Remove ${r.name}?',
+        message: 'It disappears from every till. Its sales history and reports are kept. Registers with an open session must be closed first.',
+        confirmLabel: 'Remove',
+        destructive: true);
+    if (!ok || !mounted) return;
+    try {
+      await ref.read(apiClientProvider).delete('/api/pos/registers/${r.id}');
+      if (r.id == ref.read(sessionProvider).registerId) {
+        await ref.read(shiftProvider.notifier).clearLocal();
+        await ref.read(sessionProvider.notifier).clearRegister();
+      }
+      await _refresh();
+      if (mounted) showMessage(context, '${r.name} removed.');
+    } catch (e) {
+      if (mounted) showMessage(context, errorMessage(e), error: true);
+    }
+  }
+
   Future<void> _select(String id) async {
     final session = ref.read(sessionProvider);
     if (widget.changing && id != session.registerId) {
@@ -137,6 +157,12 @@ class _RegisterSelectScreenState extends ConsumerState<RegisterSelectScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(tooltip: 'Name & stock location', icon: const Icon(Icons.edit_location_alt_outlined), onPressed: () => _changeLocation(r)),
+                          if (boot.registers.length > 1)
+                            IconButton(
+                              tooltip: 'Remove register',
+                              icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                              onPressed: () => _delete(r),
+                            ),
                           r.id == active
                               ? Chip(label: const Text('Register Active'), avatar: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary))
                               : const Icon(Icons.chevron_right),

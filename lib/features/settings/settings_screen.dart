@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
@@ -198,6 +199,12 @@ class SettingsScreen extends ConsumerWidget {
                       'Scans go straight into the till, on the web app and installed app alike. No setup needed here.'),
                 ),
                 ListTile(
+                  leading: const Icon(Icons.menu_book_outlined),
+                  title: const Text('Setup guide'),
+                  subtitle: const Text('Basic mode vs Application mode, step by step'),
+                  onTap: () => showDialog<void>(context: context, builder: (_) => const _ScannerGuideDialog()),
+                ),
+                ListTile(
                   leading: const Icon(Icons.bug_report_outlined),
                   title: const Text('Test scanner'),
                   subtitle: const Text('Scan any barcode to check it reaches the till'),
@@ -303,17 +310,33 @@ class _ScanTestDialog extends ConsumerStatefulWidget {
 class _ScanTestDialogState extends ConsumerState<_ScanTestDialog> {
   final _scans = <ScanEvent>[];
   late final StreamSubscription<ScanEvent> _sub;
+  int _keys = 0;
+  String _lastKeys = '';
 
   @override
   void initState() {
     super.initState();
     _sub = ref.read(scanBusProvider).stream.listen((e) => setState(() => _scans.insert(0, e)));
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _sub.cancel();
     super.dispose();
+  }
+
+  /// Counts raw keystrokes so a scanner that types nothing (not in Basic mode) is obvious.
+  bool _onKey(KeyEvent e) {
+    if (e is KeyDownEvent && mounted) {
+      final ch = e.character ?? (e.logicalKey == LogicalKeyboardKey.enter ? '⏎' : '');
+      setState(() {
+        _keys++;
+        _lastKeys = (_lastKeys + ch).characters.takeLast(24).toString();
+      });
+    }
+    return false;
   }
 
   @override
@@ -322,9 +345,19 @@ class _ScanTestDialogState extends ConsumerState<_ScanTestDialog> {
       title: const Text('Test scanner'),
       content: SizedBox(
         width: 380,
-        height: 220,
+        height: 300,
         child: _scans.isEmpty
-            ? const Center(child: Text('Scan a barcode now…', textAlign: TextAlign.center))
+            ? Center(
+                child: Text(
+                  _keys == 0
+                      ? 'Scan a barcode now…\n\nNo keystrokes received yet. If scanning shows nothing here, the scanner is not '
+                          'in Basic (keyboard) mode: a scanner paired through the Socket Mobile Companion app is in '
+                          'Application mode and types nothing into browsers. See Settings → Barcode scanner → Setup guide.'
+                      : 'Keystrokes received: $_keys (last: $_lastKeys)\nbut no complete scan yet. Check the scanner ends '
+                          'each scan with Enter, or scan again.',
+                  textAlign: TextAlign.center,
+                ),
+              )
             : ListView(
                 children: [
                   for (final e in _scans)
@@ -343,6 +376,41 @@ class _ScanTestDialogState extends ConsumerState<_ScanTestDialog> {
               ),
       ),
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Done'))],
+    );
+  }
+}
+
+class _ScannerGuideDialog extends StatelessWidget {
+  const _ScannerGuideDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget h(String t) => Padding(padding: const EdgeInsets.only(top: 12, bottom: 4), child: Text(t, style: theme.textTheme.titleSmall));
+    Widget p(String t) => Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(t));
+    return AlertDialog(
+      title: const Text('Socket Mobile scanner setup'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            h('A. Basic mode (recommended, works in any browser, no keys needed)'),
+            p('1. If the scanner was paired in the Socket Mobile Companion app, remove it there and in this device\'s Bluetooth settings.'),
+            p('2. Put the scanner in Basic (HID keyboard) mode: in Companion choose the scanner → change mode to Basic / HID, '
+                'or scan the "Basic mode (HID)" command barcode from the Socket Mobile quick-start guide for your model.'),
+            p('3. Pair it in this device\'s Bluetooth settings (Windows: Settings → Bluetooth & devices → Add device). It shows as a keyboard.'),
+            p('4. Settings → Barcode scanner → Test scanner, then scan. Each code appears with "Basic / HID mode".'),
+            p('Tip: open Notepad and scan. If text appears there, the till will receive it too.'),
+            h('B. Application mode (optional, Windows/Android with Companion, iOS with Rumba)'),
+            p('1. Register at the Socket Mobile developer portal and create an AppKey for App ID web:epos.zaamaitech.co.uk.'),
+            p('2. Keep Socket Mobile Companion running and pair the scanner in it.'),
+            p('3. Turn on "Socket Mobile Application mode" here and enter the App ID, Developer ID and AppKey. The status line must show "Connected".'),
+            p('Without the Developer ID and AppKey, Application mode stays off, and a scanner paired in Companion sends nothing to the browser.'),
+            p('macOS: Companion/CaptureJS is not available; use Basic mode.'),
+          ]),
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
     );
   }
 }

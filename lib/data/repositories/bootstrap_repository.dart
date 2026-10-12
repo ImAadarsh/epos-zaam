@@ -17,6 +17,8 @@ class BootstrapController extends Notifier<BootstrapData> {
     final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/bootstrap') as Map);
     state = BootstrapData.fromJson(res);
     await ref.read(localDbProvider).putKv('bootstrap', state.toJson());
+    final registerId = ref.read(sessionProvider).registerId;
+    if (registerId != null && state.register(registerId) == null) await ref.read(sessionProvider.notifier).clearRegister();
     return state;
   }
 

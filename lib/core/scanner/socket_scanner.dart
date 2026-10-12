@@ -16,7 +16,7 @@ class SocketScannerStatus {
   final String? lastScan;
 
   String get label => switch (state) {
-        SocketScannerState.off => 'Off (Basic/HID mode works without this)',
+        SocketScannerState.off => detail.isEmpty ? 'Off (Basic/HID mode works without this)' : 'Not connected: $detail',
         SocketScannerState.loading => 'Starting…',
         SocketScannerState.waiting => 'Ready. Turn the scanner on to connect',
         SocketScannerState.connected => 'Connected${detail.isEmpty ? '' : ': $detail'}',
@@ -49,7 +49,7 @@ class SocketScannerController extends Notifier<SocketScannerStatus> {
     if (key == null) {
       state = SocketScannerStatus(
         SocketScannerState.off,
-        s.socketCaptureEnabled ? 'Enter the App ID, Developer ID and AppKey' : '',
+        s.socketCaptureEnabled ? 'enter the Developer ID and AppKey from the Socket Mobile developer portal (see Setup guide)' : '',
       );
       return;
     }

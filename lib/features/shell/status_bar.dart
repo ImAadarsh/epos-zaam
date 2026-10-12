@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/security/permissions.dart';
+import '../../core/widgets/manager_override.dart';
 import '../../core/sync/connectivity.dart';
 import '../../core/sync/sync_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/outbox_repository.dart';
 import '../../data/repositories/session.dart';
+import '../auth/register_select_screen.dart';
 import '../unsynced/unsynced_screen.dart';
 
 /// Online/sync state and the signed-in staff member, shown in every app bar.
@@ -18,6 +21,7 @@ class ShellStatusActions extends ConsumerWidget {
     final online = ref.watch(onlineProvider);
     final outbox = ref.watch(outboxProvider);
     final staff = ref.watch(currentStaffProvider);
+    final register = ref.watch(currentRegisterProvider);
     final compact = MediaQuery.sizeOf(context).width < 600;
 
     final Color color;
@@ -44,6 +48,29 @@ class ShellStatusActions extends ConsumerWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (register != null) ...[
+          Tooltip(
+            message: 'Register: ${register.name} · tap to switch, add or remove registers',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () async {
+                if (await requirePermission(context, ref, Perm.changeRegister) && context.mounted) {
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RegisterSelectScreen(changing: true)));
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(border: Border.all(color: Theme.of(context).dividerColor), borderRadius: BorderRadius.circular(20)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.point_of_sale, size: 18),
+                  if (!compact) ...[const SizedBox(width: 6), Text(register.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))],
+                  const Icon(Icons.arrow_drop_down, size: 18),
+                ]),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
         Tooltip(
           message: 'Tap to view unsynced changes. Long-press to sync now.',
           child: InkWell(

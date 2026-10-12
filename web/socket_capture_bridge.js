@@ -45,7 +45,11 @@
 
   // onScan(code, symbology); onStatus(state, detail) with state in
   // loading | waiting | connected | disconnected | no-service | error.
-  function start(appId, developerId, appKey, onScan, onStatus) {
+  function start(appId, developerId, appKey, onScan, rawStatus) {
+    var onStatus = function (state, detail) {
+      console.info('[Zaam scanner] Socket Mobile', state, detail || '');
+      rawStatus(state, detail);
+    };
     stop();
     var gen = generation;
     var live = function () { return gen === generation; };

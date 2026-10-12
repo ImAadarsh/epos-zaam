@@ -43,7 +43,9 @@ class ScanBus {
 
   void emit(String code, ScanSource source) {
     final c = code.trim();
-    if (c.isNotEmpty) _controller.add(ScanEvent(c, source));
+    if (c.isEmpty) return;
+    debugPrint('[Zaam scanner] ${source.name}: $c');
+    _controller.add(ScanEvent(c, source));
   }
 
   bool _textFieldFocused() {

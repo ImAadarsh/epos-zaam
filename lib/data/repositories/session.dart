@@ -168,6 +168,21 @@ class SessionController extends Notifier<SessionState> {
     await _persist();
   }
 
+  /// Forgets the register (removed or no longer available) so the device picks one again.
+  Future<void> clearRegister() async {
+    state = SessionState(
+      baseUrl: state.baseUrl,
+      deviceId: state.deviceId,
+      accessToken: state.accessToken,
+      refreshToken: state.refreshToken,
+      user: state.user,
+      staffId: state.staffId,
+      locked: state.locked,
+      lastActiveAt: state.lastActiveAt,
+    );
+    await _persist();
+  }
+
   Future<void> unlock(String staffId) async {
     state = state.copyWith(staffId: staffId, locked: false, lastActiveAt: DateTime.now());
     AppLog.info('Till unlocked by staff $staffId');
