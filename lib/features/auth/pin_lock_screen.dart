@@ -11,7 +11,7 @@ import '../../data/repositories/outbox_repository.dart';
 import '../../data/repositories/session.dart';
 import '../staff/clock_screen.dart';
 
-/// Staff unlock the till with their PIN (checked offline against cached hashes).
+/// Staff unlock the till with their PIN (checked by the server; PINs used here before also work offline).
 class PinLockScreen extends ConsumerStatefulWidget {
   const PinLockScreen({super.key});
 
@@ -25,16 +25,20 @@ class _PinLockScreenState extends ConsumerState<PinLockScreen> {
     super.initState();
     Future.microtask(() async {
       try {
-        await ref.read(bootstrapProvider.notifier).refresh();
+        final boot = await ref.read(bootstrapProvider.notifier).refresh();
+        await ref.read(pinVerifierProvider).prune(boot.staff);
       } catch (_) {}
     });
   }
 
   Future<bool> _submit(String pin) async {
-    final staff = ref.read(bootstrapProvider).staff;
-    final match = matchPin(staff, pin);
-    if (match == null) return false;
-    await ref.read(sessionProvider.notifier).unlock(match.id);
+    final r = await ref.read(pinVerifierProvider).verify(pin);
+    final match = r.staff;
+    if (match == null) {
+      if (r.message != null && mounted) showMessage(context, r.message!, error: true);
+      return false;
+    }
+    await ref.read(sessionProvider.notifier).unlock(match.id, staffToken: r.staffToken);
     return true;
   }
 
@@ -57,7 +61,7 @@ class _PinLockScreenState extends ConsumerState<PinLockScreen> {
     final boot = ref.watch(bootstrapProvider);
     final session = ref.watch(sessionProvider);
     final register = ref.watch(currentRegisterProvider);
-    final withPins = boot.staff.where((s) => s.pinHash != null).toList();
+    final withPins = boot.staff.where((s) => s.hasPin).toList();
     final user = session.user!;
     final theme = Theme.of(context);
 

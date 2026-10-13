@@ -32,7 +32,7 @@ class _ClockScreenState extends ConsumerState<ClockScreen> {
 
   Future<void> _toggle(StaffMember s) async {
     final me = ref.read(currentStaffProvider);
-    final needPin = s.pinHash != null && (widget.requirePin || me?.id != s.id);
+    final needPin = s.hasPin && (widget.requirePin || me?.id != s.id);
     if (needPin) {
       final ok = await showDialog<bool>(
         context: context,
@@ -41,8 +41,11 @@ class _ClockScreenState extends ConsumerState<ClockScreen> {
           content: SizedBox(
             width: 340,
             child: PinEntry(onSubmit: (pin) async {
-              final m = matchPin([s], pin);
-              if (m == null) return false;
+              final r = await ref.read(pinVerifierProvider).verify(pin, onlyUserId: s.id);
+              if (r.staff == null) {
+                if (r.message != null && ctx.mounted) showMessage(ctx, r.message!, error: true);
+                return false;
+              }
               if (ctx.mounted) Navigator.pop(ctx, true);
               return true;
             }),
@@ -51,7 +54,7 @@ class _ClockScreenState extends ConsumerState<ClockScreen> {
         ),
       );
       if (ok != true) return;
-    } else if (widget.requirePin && s.pinHash == null) {
+    } else if (widget.requirePin && !s.hasPin) {
       if (mounted) showMessage(context, '${s.name} has no PIN yet. A manager can set one in Settings → Staff PINs.', error: true);
       return;
     }

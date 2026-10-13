@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/network/api_client.dart';
+import '../../core/security/pin.dart';
 import '../../core/storage/local_db.dart';
 import '../../core/utils/app_log.dart';
 import 'initial_data.dart';
@@ -47,6 +48,7 @@ class SessionState {
     this.staffId,
     this.locked = true,
     this.lastActiveAt,
+    this.staffToken,
   });
 
   final String baseUrl;
@@ -65,6 +67,10 @@ class SessionState {
   /// Last time the unlocked till was used; drives the idle lock across reloads.
   final DateTime? lastActiveAt;
 
+  /// Server proof that [staffId] unlocked with their PIN; lets a manager PIN do manager-only API calls
+  /// on a device signed in with a cashier account.
+  final String? staffToken;
+
   bool get isLoggedIn => accessToken != null && user != null;
 
   SessionState copyWith({
@@ -77,6 +83,8 @@ class SessionState {
     bool clearStaff = false,
     bool? locked,
     DateTime? lastActiveAt,
+    String? staffToken,
+    bool clearStaffToken = false,
   }) =>
       SessionState(
         baseUrl: baseUrl ?? this.baseUrl,
@@ -88,6 +96,7 @@ class SessionState {
         staffId: clearStaff ? null : (staffId ?? this.staffId),
         locked: locked ?? this.locked,
         lastActiveAt: lastActiveAt ?? this.lastActiveAt,
+        staffToken: clearStaffToken ? null : (staffToken ?? this.staffToken),
       );
 
   Map<String, dynamic> toJson() => {
@@ -99,6 +108,7 @@ class SessionState {
         'staffId': staffId,
         'locked': locked,
         'lastActiveAt': lastActiveAt?.toIso8601String(),
+        'staffToken': staffToken,
       };
 }
 
@@ -122,6 +132,7 @@ class SessionController extends Notifier<SessionState> {
       // A reload keeps the till as it was (unlocked after sign-in) unless it was locked or idle too long.
       locked: j['locked'] != false || j['staffId'] == null || idleExpired,
       lastActiveAt: lastActive,
+      staffToken: j['staffToken'] as String?,
     );
   }
 
@@ -179,12 +190,13 @@ class SessionController extends Notifier<SessionState> {
       staffId: state.staffId,
       locked: state.locked,
       lastActiveAt: state.lastActiveAt,
+      staffToken: state.staffToken,
     );
     await _persist();
   }
 
-  Future<void> unlock(String staffId) async {
-    state = state.copyWith(staffId: staffId, locked: false, lastActiveAt: DateTime.now());
+  Future<void> unlock(String staffId, {String? staffToken}) async {
+    state = state.copyWith(staffId: staffId, locked: false, lastActiveAt: DateTime.now(), staffToken: staffToken, clearStaffToken: staffToken == null);
     AppLog.info('Till unlocked by staff $staffId');
     await _persist();
   }
@@ -198,7 +210,7 @@ class SessionController extends Notifier<SessionState> {
   }
 
   Future<void> lock() async {
-    state = state.copyWith(locked: true);
+    state = state.copyWith(locked: true, clearStaffToken: true);
     await _persist();
   }
 
@@ -219,6 +231,7 @@ final apiClientProvider = Provider<ApiClient>((ref) {
       final s = ref.read(sessionProvider);
       return (access: s.accessToken, refresh: s.refreshToken);
     },
+    staffToken: () => ref.read(pinVerifierProvider).overrideToken ?? ref.read(sessionProvider).staffToken,
     onRefreshed: (token) => ref.read(sessionProvider.notifier).updateAccessToken(token),
     onUnauthorized: () => AppLog.warn('API returned 401 after refresh; sign in again from Settings'),
   );

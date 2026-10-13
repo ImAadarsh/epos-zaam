@@ -14,7 +14,9 @@ class ApiClient {
     required TokenReader tokens,
     required void Function(String accessToken) onRefreshed,
     required void Function() onUnauthorized,
+    String? Function()? staffToken,
   })  : _tokens = tokens,
+        _staffToken = staffToken,
         _onRefreshed = onRefreshed,
         _onUnauthorized = onUnauthorized {
     dio = Dio(BaseOptions(
@@ -30,6 +32,8 @@ class ApiClient {
         if (access != null && options.headers['Authorization'] == null) {
           options.headers['Authorization'] = 'Bearer $access';
         }
+        final staff = _staffToken?.call();
+        if (staff != null) options.headers['X-Pos-Staff-Token'] = staff;
         handler.next(options);
       },
       onError: (error, handler) async {
@@ -57,6 +61,7 @@ class ApiClient {
 
   final String baseUrl;
   final TokenReader _tokens;
+  final String? Function()? _staffToken;
   final void Function(String accessToken) _onRefreshed;
   final void Function() _onUnauthorized;
   late final Dio dio;

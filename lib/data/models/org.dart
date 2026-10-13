@@ -118,8 +118,6 @@ class StaffMember {
     this.roles = const [],
     this.posRole = PosRole.cashier,
     this.hasPin = false,
-    this.pinSalt,
-    this.pinHash,
   });
 
   final String id;
@@ -128,8 +126,6 @@ class StaffMember {
   final List<String> roles;
   final PosRole posRole;
   final bool hasPin;
-  final String? pinSalt;
-  final String? pinHash;
 
   String get initials {
     final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
@@ -145,8 +141,6 @@ class StaffMember {
         roles: ((j['roles'] as List?) ?? []).map((e) => '$e').toList(),
         posRole: posRoleFrom(j['posRole'] as String?),
         hasPin: j['hasPin'] == true,
-        pinSalt: j['pinSalt'] as String?,
-        pinHash: j['pinHash'] as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -156,8 +150,6 @@ class StaffMember {
         'roles': roles,
         'posRole': posRole.name,
         'hasPin': hasPin,
-        'pinSalt': pinSalt,
-        'pinHash': pinHash,
       };
 }
 
