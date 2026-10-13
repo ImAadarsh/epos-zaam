@@ -30,6 +30,26 @@
     return out;
   }
 
+  // AppKeys from the developer portal are signed for the platform-prefixed bundle ID.
+  function webAppId(appId) {
+    appId = String(appId || '').trim();
+    return /^[a-z]+:/i.test(appId) ? appId : 'web:' + appId;
+  }
+
+  function describeError(err) {
+    if (err == null) return 'unknown';
+    if (typeof err !== 'object') return String(err);
+    var code = err.code !== undefined ? err.code : err.result;
+    var msg = err.message || err.reason || err.description;
+    if (code !== undefined || msg) return [code, msg].filter(function (v) { return v !== undefined && v !== ''; }).join(' ');
+    try { return JSON.stringify(err); } catch (e) { return String(err); }
+  }
+
+  function errorCode(err) {
+    if (err && typeof err === 'object') return err.code !== undefined ? err.code : err.result;
+    return err;
+  }
+
   function stop() {
     generation++;
     var old = capture;
@@ -70,7 +90,7 @@
             if (!live()) { try { dev.close(); } catch (e) {} return; }
             devices[guid] = dev;
             onStatus('connected', name);
-          }).catch(function (err) { onStatus('error', 'Could not open ' + name + ' (' + err + ')'); });
+          }).catch(function (err) { onStatus('error', 'Could not open ' + name + ' (' + describeError(err) + ')'); });
         } else if (event.id === ids.DeviceRemoval) {
           var g = event.value && event.value.guid;
           if (g && devices[g]) {
@@ -84,15 +104,21 @@
           if (code) onScan(code, (event.value && event.value.name) || '');
         }
       };
-      return root.open({ appId: appId, developerId: developerId, appKey: appKey }, notify).then(function () {
+      var appInfo = {
+        appId: webAppId(appId),
+        developerId: String(developerId || '').trim(),
+        appKey: String(appKey || '').trim()
+      };
+      return root.open(appInfo, notify).then(function () {
         if (live() && !Object.keys(devices).length) onStatus('waiting', '');
       }).catch(function (err) {
         if (!live()) return;
         capture = null;
-        if (err === SM.SktErrors.ESKT_UNABLEOPENDEVICE) {
+        console.error('[Zaam scanner] CaptureJS open failed', err);
+        if (errorCode(err) === SM.SktErrors.ESKT_UNABLEOPENDEVICE) {
           onStatus('no-service', 'Socket Mobile Companion is not running on this device');
         } else {
-          onStatus('error', 'CaptureJS error ' + err + ' (check App ID, Developer ID and AppKey)');
+          onStatus('error', 'CaptureJS error ' + describeError(err) + ' (check App ID, Developer ID and AppKey)');
         }
       });
     }).catch(function (err) {
