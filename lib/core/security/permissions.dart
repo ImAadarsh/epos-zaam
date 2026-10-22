@@ -10,6 +10,7 @@ enum Perm {
   closeRegister,
   manageAvailability,
   settings,
+  createVatRate,
   staffPins,
   changeRegister,
   resetApp,
@@ -26,6 +27,7 @@ extension PermX on Perm {
         Perm.closeRegister => 'Close the register',
         Perm.manageAvailability => 'Change product availability',
         Perm.settings => 'Change till settings',
+        Perm.createVatRate => 'Create a VAT rate for the organisation',
         Perm.staffPins => 'Manage staff PINs',
         Perm.changeRegister => 'Change register',
         Perm.resetApp => 'Reset the app',
@@ -35,7 +37,7 @@ extension PermX on Perm {
         Perm.manageAvailability || Perm.noSale => PosRole.supervisor,
         Perm.refund || Perm.voidSale || Perm.discountOverLimit || Perm.priceOverride || Perm.cashMovement => PosRole.supervisor,
         Perm.closeRegister => PosRole.supervisor,
-        Perm.settings || Perm.staffPins || Perm.changeRegister || Perm.resetApp => PosRole.manager,
+        Perm.settings || Perm.createVatRate || Perm.staffPins || Perm.changeRegister || Perm.resetApp => PosRole.manager,
       };
 }
 

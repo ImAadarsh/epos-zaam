@@ -26,6 +26,32 @@ class BootstrapController extends Notifier<BootstrapData> {
     state = const BootstrapData();
     await ref.read(localDbProvider).deleteKv('bootstrap');
   }
+
+  /// Adds a VAT rate created on this till so the picker can use it without waiting for a full bootstrap.
+  Future<void> addTaxCode(TaxCodeInfo code) async {
+    if (state.taxCodes.any((t) => t.id == code.id || t.code == code.code)) {
+      state = BootstrapData(
+        org: state.org,
+        registers: state.registers,
+        warehouses: state.warehouses,
+        staff: state.staff,
+        taxCodes: [for (final t in state.taxCodes) t.id == code.id || t.code == code.code ? code : t],
+        discountPresets: state.discountPresets,
+        currency: state.currency,
+      );
+    } else {
+      state = BootstrapData(
+        org: state.org,
+        registers: state.registers,
+        warehouses: state.warehouses,
+        staff: state.staff,
+        taxCodes: [...state.taxCodes, code],
+        discountPresets: state.discountPresets,
+        currency: state.currency,
+      );
+    }
+    await ref.read(localDbProvider).putKv('bootstrap', state.toJson());
+  }
 }
 
 final bootstrapProvider = NotifierProvider<BootstrapController, BootstrapData>(BootstrapController.new);

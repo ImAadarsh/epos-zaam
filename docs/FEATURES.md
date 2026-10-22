@@ -21,7 +21,7 @@ Legend: ✅ done · 🟡 partial · ⛔ stub (clear error / manual fallback)
 - ✅ Variants, modifiers, allergen confirmation, unavailable / out-of-stock prompts
 - ✅ Cart: quantity, line discount, price override, notes, cart discount (proportional), customer, sale type, table
 - ✅ Payments: cash (quick-cash, change), card, voucher/other, split tender, tips, "show prompt" per type
-- ✅ Receipts: ESC/POS network printer (TCP 9100, drawer kick, CODE128/QR), PDF via system print dialog, email
+- ✅ Receipts: USB ESC/POS via WebUSB (Chrome PWA), network ESC/POS (TCP 9100, native), drawer kick, CODE128/QR, PDF via system print dialog, email
 - ✅ Park / resume sales (Saved Sales) with table timers
 - ✅ Offline: sales, refunds, shifts, clock entries queued and replayed in order; local receipt numbers
 

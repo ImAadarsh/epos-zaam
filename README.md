@@ -38,7 +38,7 @@ Customer display (web): **Options → Connect Display** opens `?display=1` in a 
 ## Payments & printers
 
 - **Card:** standalone terminal (confirm manually) or SumUp Solo – enter API key, merchant code and reader id in **Settings → Card provider**.
-- **Printers:** ESC/POS network printers (IP, port 9100) with cash drawer kick, or PDF via the system print dialog.
+- **Printers:** USB ESC/POS via WebUSB in Chrome (pair in Settings → Printer), network ESC/POS (IP, port 9100, native apps) with cash drawer kick, or PDF via the system print dialog.
 
 ## Checks
 

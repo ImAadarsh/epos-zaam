@@ -153,19 +153,64 @@ class StaffMember {
       };
 }
 
+/// Accepts a fraction (`0.2`) or a percent (`20`) and returns a fraction.
+double normalizeVatRate(double rate) {
+  if (rate > 1) return rate / 100;
+  return rate;
+}
+
+/// Formats a VAT fraction (0.2) as a percent label (`20%`).
+String formatVatPercent(double rate) {
+  final p = normalizeVatRate(rate) * 100;
+  if ((p - p.round()).abs() < 0.051) return '${p.round()}%';
+  return '${p.toStringAsFixed(1)}%';
+}
+
+/// Organisation default VAT, else the 20% code, else a synthetic UK 20% rate.
+TaxCodeInfo pickOrgOrUkVat(List<TaxCodeInfo> codes) {
+  for (final c in codes) {
+    if (c.isDefault) return c;
+  }
+  for (final c in codes) {
+    if ((c.rate - 0.2).abs() < 0.0005) return c;
+  }
+  return const TaxCodeInfo(id: '', code: 'VAT20', name: 'VAT 20%', rate: 0.2, isDefault: true);
+}
+
+class DiscountPreset {
+  const DiscountPreset({required this.id, required this.name, required this.type, required this.value});
+  final String id;
+  final String name;
+  /// `percent` or `amount` (pounds).
+  final String type;
+  final double value;
+  bool get isAmount => type == 'amount';
+  factory DiscountPreset.fromJson(Map<String, dynamic> j) => DiscountPreset(
+        id: '${j['id']}',
+        name: '${j['name'] ?? ''}',
+        type: '${j['type']}' == 'amount' ? 'amount' : 'percent',
+        value: (j['value'] is num ? j['value'] as num : num.tryParse('${j['value'] ?? 0}') ?? 0).toDouble(),
+      );
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'type': type, 'value': value};
+}
+
 class TaxCodeInfo {
   const TaxCodeInfo({required this.id, required this.code, required this.name, required this.rate, this.isDefault = false});
   final String id;
   final String code;
   final String name;
+
+  /// Fraction, e.g. `0.2` for 20%.
   final double rate;
   final bool isDefault;
+
+  String get percentLabel => formatVatPercent(rate);
 
   factory TaxCodeInfo.fromJson(Map<String, dynamic> j) => TaxCodeInfo(
         id: '${j['id']}',
         code: '${j['code']}',
         name: '${j['name']}',
-        rate: ((j['rate'] as num?) ?? 0).toDouble(),
+        rate: normalizeVatRate((j['rate'] is num ? j['rate'] as num : num.tryParse('${j['rate'] ?? 0}') ?? 0).toDouble()),
         isDefault: j['isDefault'] == true,
       );
 
@@ -174,13 +219,14 @@ class TaxCodeInfo {
 
 /// Everything returned by `GET /api/pos/bootstrap`, cached for offline starts.
 class BootstrapData {
-  const BootstrapData({this.org, this.registers = const [], this.warehouses = const [], this.staff = const [], this.taxCodes = const [], this.currency = 'GBP'});
+  const BootstrapData({this.org, this.registers = const [], this.warehouses = const [], this.staff = const [], this.taxCodes = const [], this.discountPresets = const [], this.currency = 'GBP'});
 
   final OrgInfo? org;
   final List<Register> registers;
   final List<WarehouseInfo> warehouses;
   final List<StaffMember> staff;
   final List<TaxCodeInfo> taxCodes;
+  final List<DiscountPreset> discountPresets;
   final String currency;
 
   Register? register(String? id) => registers.firstWhereOrNull((r) => r.id == id);
@@ -192,6 +238,7 @@ class BootstrapData {
         warehouses: ((j['warehouses'] as List?) ?? []).map((e) => WarehouseInfo.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
         staff: ((j['staff'] as List?) ?? []).map((e) => StaffMember.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
         taxCodes: ((j['taxCodes'] as List?) ?? []).map((e) => TaxCodeInfo.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
+        discountPresets: ((j['discountPresets'] as List?) ?? []).map((e) => DiscountPreset.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
         currency: '${j['currency'] ?? 'GBP'}',
       );
 
@@ -201,6 +248,7 @@ class BootstrapData {
         'warehouses': warehouses.map((w) => w.toJson()).toList(),
         'staff': staff.map((s) => s.toJson()).toList(),
         'taxCodes': taxCodes.map((t) => t.toJson()).toList(),
+        'discountPresets': discountPresets.map((t) => t.toJson()).toList(),
         'currency': currency,
       };
 }

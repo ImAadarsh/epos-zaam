@@ -8,13 +8,14 @@ extension CardProviderTypeX on CardProviderType {
       };
 }
 
-enum PrinterType { none, system, network, bluetooth }
+enum PrinterType { none, system, network, usb, bluetooth }
 
 extension PrinterTypeX on PrinterType {
   String get label => switch (this) {
         PrinterType.none => 'No printer',
         PrinterType.system => 'System print dialog / PDF',
         PrinterType.network => 'Network ESC/POS printer (LAN)',
+        PrinterType.usb => 'USB ESC/POS printer (Chrome)',
         PrinterType.bluetooth => 'Bluetooth ESC/POS printer',
       };
 }
@@ -45,12 +46,17 @@ class PosSettings {
     this.receiptPrompt = true,
     this.receiptDefault = ReceiptDefault.ask,
     this.pricesIncludeTax = true,
+    this.vatEnabled = true,
+    this.vatRate = 0.2,
+    this.vatTaxCodeId = '',
     this.tipsEnabled = false,
     this.maxCashierDiscountPercent = 10,
     this.autoLockSeconds = 0,
     this.printerType = PrinterType.system,
     this.printerHost = '',
     this.printerPort = 9100,
+    this.usbVendorId = 0,
+    this.usbProductId = 0,
     this.paperWidth = 80,
     this.openDrawerOnCash = true,
     this.receiptFooter = 'Thank you for shopping with us!',
@@ -87,6 +93,14 @@ class PosSettings {
   final bool receiptPrompt;
   final ReceiptDefault receiptDefault;
   final bool pricesIncludeTax;
+
+  /// Till default for new sales. Off = 0% VAT. On with [vatRate] applies that rate to every line.
+  final bool vatEnabled;
+
+  /// Fraction (`0.05` = 5%). Null means keep each product's own VAT while VAT is on.
+  final double? vatRate;
+  final String vatTaxCodeId;
+
   final bool tipsEnabled;
   final int maxCashierDiscountPercent;
   final int autoLockSeconds;
@@ -94,6 +108,10 @@ class PosSettings {
   final PrinterType printerType;
   final String printerHost;
   final int printerPort;
+
+  /// Last paired WebUSB printer (0 = unset). Used to prefer auto-reconnect.
+  final int usbVendorId;
+  final int usbProductId;
   final int paperWidth;
   final bool openDrawerOnCash;
   final String receiptFooter;
@@ -134,12 +152,18 @@ class PosSettings {
     bool? receiptPrompt,
     ReceiptDefault? receiptDefault,
     bool? pricesIncludeTax,
+    bool? vatEnabled,
+    double? vatRate,
+    bool clearVatRate = false,
+    String? vatTaxCodeId,
     bool? tipsEnabled,
     int? maxCashierDiscountPercent,
     int? autoLockSeconds,
     PrinterType? printerType,
     String? printerHost,
     int? printerPort,
+    int? usbVendorId,
+    int? usbProductId,
     int? paperWidth,
     bool? openDrawerOnCash,
     String? receiptFooter,
@@ -173,12 +197,17 @@ class PosSettings {
         receiptPrompt: receiptPrompt ?? this.receiptPrompt,
         receiptDefault: receiptDefault ?? this.receiptDefault,
         pricesIncludeTax: pricesIncludeTax ?? this.pricesIncludeTax,
+        vatEnabled: vatEnabled ?? this.vatEnabled,
+        vatRate: clearVatRate ? null : (vatRate ?? this.vatRate),
+        vatTaxCodeId: vatTaxCodeId ?? this.vatTaxCodeId,
         tipsEnabled: tipsEnabled ?? this.tipsEnabled,
         maxCashierDiscountPercent: maxCashierDiscountPercent ?? this.maxCashierDiscountPercent,
         autoLockSeconds: autoLockSeconds ?? this.autoLockSeconds,
         printerType: printerType ?? this.printerType,
         printerHost: printerHost ?? this.printerHost,
         printerPort: printerPort ?? this.printerPort,
+        usbVendorId: usbVendorId ?? this.usbVendorId,
+        usbProductId: usbProductId ?? this.usbProductId,
         paperWidth: paperWidth ?? this.paperWidth,
         openDrawerOnCash: openDrawerOnCash ?? this.openDrawerOnCash,
         receiptFooter: receiptFooter ?? this.receiptFooter,
@@ -213,12 +242,17 @@ class PosSettings {
         'receiptPrompt': receiptPrompt,
         'receiptDefault': receiptDefault.name,
         'pricesIncludeTax': pricesIncludeTax,
+        'vatEnabled': vatEnabled,
+        'vatRate': vatRate,
+        'vatTaxCodeId': vatTaxCodeId,
         'tipsEnabled': tipsEnabled,
         'maxCashierDiscountPercent': maxCashierDiscountPercent,
         'autoLockSeconds': autoLockSeconds,
         'printerType': printerType.name,
         'printerHost': printerHost,
         'printerPort': printerPort,
+        'usbVendorId': usbVendorId,
+        'usbProductId': usbProductId,
         'paperWidth': paperWidth,
         'openDrawerOnCash': openDrawerOnCash,
         'receiptFooter': receiptFooter,
@@ -258,12 +292,17 @@ class PosSettings {
       receiptPrompt: b('receiptPrompt', d.receiptPrompt),
       receiptDefault: ReceiptDefault.values.firstWhere((v) => v.name == j['receiptDefault'], orElse: () => d.receiptDefault),
       pricesIncludeTax: b('pricesIncludeTax', d.pricesIncludeTax),
+      vatEnabled: b('vatEnabled', d.vatEnabled),
+      vatRate: j['vatRate'] is num ? (j['vatRate'] as num).toDouble() : d.vatRate,
+      vatTaxCodeId: s('vatTaxCodeId', d.vatTaxCodeId),
       tipsEnabled: b('tipsEnabled', d.tipsEnabled),
       maxCashierDiscountPercent: i('maxCashierDiscountPercent', d.maxCashierDiscountPercent),
       autoLockSeconds: i('autoLockSeconds', d.autoLockSeconds),
       printerType: PrinterType.values.firstWhere((v) => v.name == j['printerType'], orElse: () => d.printerType),
       printerHost: s('printerHost', d.printerHost),
       printerPort: i('printerPort', d.printerPort),
+      usbVendorId: i('usbVendorId', d.usbVendorId),
+      usbProductId: i('usbProductId', d.usbProductId),
       paperWidth: i('paperWidth', d.paperWidth),
       openDrawerOnCash: b('openDrawerOnCash', d.openDrawerOnCash),
       receiptFooter: s('receiptFooter', d.receiptFooter),

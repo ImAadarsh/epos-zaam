@@ -117,6 +117,9 @@ class Cart {
     this.parkedId,
     this.startedAt,
     this.allergenAsked = false,
+    this.applyVat = true,
+    this.vatRate,
+    this.vatTaxCodeId,
   });
 
   final List<CartLine> lines;
@@ -130,6 +133,19 @@ class Cart {
   final String? parkedId;
   final DateTime? startedAt;
   final bool allergenAsked;
+
+  /// When false, every line is treated as 0% VAT.
+  final bool applyVat;
+
+  /// Till-wide VAT fraction for this sale (`0.05` = 5%). Null keeps each product's own rate.
+  final double? vatRate;
+  final String? vatTaxCodeId;
+
+  double taxRateFor(CartLine line) {
+    if (!applyVat) return 0;
+    final raw = vatRate ?? line.product.taxRate;
+    return raw > 1 ? raw / 100 : raw;
+  }
 
   bool get isEmpty => lines.isEmpty;
 
@@ -151,6 +167,11 @@ class Cart {
     String? parkedId,
     DateTime? startedAt,
     bool? allergenAsked,
+    bool? applyVat,
+    double? vatRate,
+    bool clearVatRate = false,
+    String? vatTaxCodeId,
+    bool clearVatTaxCodeId = false,
   }) =>
       Cart(
         lines: lines ?? this.lines,
@@ -162,6 +183,9 @@ class Cart {
         parkedId: parkedId ?? this.parkedId,
         startedAt: startedAt ?? this.startedAt,
         allergenAsked: allergenAsked ?? this.allergenAsked,
+        applyVat: applyVat ?? this.applyVat,
+        vatRate: clearVatRate ? null : (vatRate ?? this.vatRate),
+        vatTaxCodeId: clearVatTaxCodeId ? null : (vatTaxCodeId ?? this.vatTaxCodeId),
       );
 
   Map<String, dynamic> toJson() => {
@@ -173,6 +197,9 @@ class Cart {
         'tableRef': tableRef,
         'parkedId': parkedId,
         'startedAt': startedAt?.toIso8601String(),
+        'applyVat': applyVat,
+        'vatRate': vatRate,
+        'vatTaxCodeId': vatTaxCodeId,
       };
 
   factory Cart.fromJson(Map<String, dynamic> j) => Cart(
@@ -185,6 +212,9 @@ class Cart {
         parkedId: j['parkedId'] as String?,
         startedAt: j['startedAt'] != null ? DateTime.tryParse('${j['startedAt']}') : null,
         allergenAsked: true,
+        applyVat: j['applyVat'] != false,
+        vatRate: (j['vatRate'] as num?)?.toDouble(),
+        vatTaxCodeId: j['vatTaxCodeId'] as String?,
       );
 }
 
@@ -250,10 +280,13 @@ CartTotals computeTotals(Cart cart, {bool pricesIncludeTax = true}) {
       allocated += share;
     }
     final net = (lineNet - share).clamp(0, lineNet);
-    final rate = line.product.taxRate;
+    final rate = cart.taxRateFor(line);
     final int lineTax;
     final int lineTotal;
-    if (pricesIncludeTax) {
+    // A rate chosen on the till (20% or an organisation code) is added on top of the price.
+    // Product rates stay inside the price only when the till is set to VAT-inclusive shelf prices.
+    final addOnTop = cart.vatRate != null || !pricesIncludeTax;
+    if (!addOnTop) {
       lineTax = rate <= 0 ? 0 : (net - net / (1 + rate)).round();
       lineTotal = net;
     } else {

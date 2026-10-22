@@ -9,6 +9,7 @@ import '../../data/models/org.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/outbox_repository.dart';
 import '../../data/repositories/session.dart';
+import '../../data/repositories/settings_repository.dart';
 import '../staff/clock_screen.dart';
 
 /// Staff unlock the till with their PIN (checked by the server; PINs used here before also work offline).
@@ -27,6 +28,7 @@ class _PinLockScreenState extends ConsumerState<PinLockScreen> {
       try {
         final boot = await ref.read(bootstrapProvider.notifier).refresh();
         await ref.read(pinVerifierProvider).prune(boot.staff);
+        await ref.read(settingsProvider.notifier).applyOrgVat(boot.taxCodes);
       } catch (_) {}
     });
   }

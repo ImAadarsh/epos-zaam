@@ -112,7 +112,10 @@ class Product {
         pricePence: toPence(j['price'] as num?),
         promoPricePence: j['promoPrice'] == null ? null : toPence(j['promoPrice'] as num),
         costPence: j['costPrice'] == null ? null : toPence(j['costPrice'] as num),
-        taxRate: ((j['taxRate'] as num?) ?? 0.2).toDouble(),
+        taxRate: () {
+          final raw = ((j['taxRate'] as num?) ?? 0.2).toDouble();
+          return raw > 1 ? raw / 100 : raw;
+        }(),
         taxCode: j['taxCode'] as String?,
         barcodes: ((j['barcodes'] as List?) ?? []).map((e) => '$e').toList(),
         imageUrl: j['imageUrl'] as String?,
@@ -162,7 +165,10 @@ class Product {
         pricePence: (j['pricePence'] as num?)?.toInt() ?? 0,
         promoPricePence: (j['promoPricePence'] as num?)?.toInt(),
         costPence: (j['costPence'] as num?)?.toInt(),
-        taxRate: ((j['taxRate'] as num?) ?? 0.2).toDouble(),
+        taxRate: () {
+          final raw = ((j['taxRate'] as num?) ?? 0.2).toDouble();
+          return raw > 1 ? raw / 100 : raw;
+        }(),
         taxCode: j['taxCode'] as String?,
         barcodes: ((j['barcodes'] as List?) ?? []).map((e) => '$e').toList(),
         imageUrl: j['imageUrl'] as String?,

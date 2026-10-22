@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/storage/local_db.dart';
 import '../../core/utils/app_log.dart';
+import '../models/org.dart';
 import '../models/settings.dart';
 import 'initial_data.dart';
 import 'session.dart';
@@ -29,6 +30,17 @@ class SettingsController extends Notifier<PosSettings> {
     state = PosSettings.fromJson(merged);
     await db.putKv('settings', state.toJson());
     await db.putKv('register_defaults', {'registerId': registerId});
+  }
+
+  /// Aligns the till VAT with the organisation default (or UK 20%) after bootstrap.
+  Future<void> applyOrgVat(List<TaxCodeInfo> codes) async {
+    if (!state.vatEnabled) return;
+    final chosen = pickOrgOrUkVat(codes);
+    final matchesOrg = codes.any((c) => c.id == state.vatTaxCodeId && state.vatTaxCodeId.isNotEmpty) ||
+        (state.vatRate != null && codes.any((c) => (c.rate - state.vatRate!).abs() < 0.0005)) ||
+        (state.vatRate != null && (state.vatRate! - 0.2).abs() < 0.0005);
+    if (matchesOrg && state.vatRate != null) return;
+    await update((s) => s.copyWith(vatEnabled: true, vatRate: chosen.rate, vatTaxCodeId: chosen.id));
   }
 
   /// Best-effort: store non-secret settings on the register profile so other devices can reuse them.

@@ -8,6 +8,7 @@ import 'escpos.dart';
 import 'pdf_receipt.dart';
 import 'receipt.dart';
 import 'socket_io.dart' if (dart.library.js_interop) 'socket_web.dart';
+import 'usb_stub.dart' if (dart.library.js_interop) 'usb_web.dart';
 
 class PrinterException implements Exception {
   PrinterException(this.message);
@@ -20,13 +21,49 @@ class PrinterException implements Exception {
 ///
 /// * system — OS print dialog / AirPrint / PDF (every platform, incl. web)
 /// * network — raw ESC/POS over TCP 9100 (native platforms)
+/// * usb — WebUSB ESC/POS in Chrome (PWA)
 /// * bluetooth — needs a native plugin per platform; reported as not configured
 class PrinterService {
-  PrinterService(this._settings);
+  PrinterService(this._settings, {this.onUsbPaired});
 
   final PosSettings Function() _settings;
 
+  /// Called after a successful WebUSB pair so the till can persist VID/PID.
+  final void Function(UsbPrinterInfo info)? onUsbPaired;
+
   bool get networkSupported => rawSocketSupported;
+  bool get usbPrintingSupported => usbSupported;
+  bool get usbIsConnected => usbConnected;
+  UsbPrinterInfo? get usbPrinter => currentUsbPrinter;
+
+  Future<UsbPrinterInfo> connectUsbPrinter() async {
+    if (!usbSupported) {
+      throw PrinterException('USB printing needs Chrome over HTTPS (or localhost).');
+    }
+    try {
+      final info = await requestPrinter();
+      onUsbPaired?.call(info);
+      return info;
+    } on UnsupportedError catch (e) {
+      throw PrinterException(e.message ?? 'USB printing is not supported here.');
+    } catch (e) {
+      throw PrinterException('Could not connect USB printer ($e).');
+    }
+  }
+
+  /// Re-opens a previously permitted WebUSB device (no picker).
+  Future<UsbPrinterInfo?> reconnectUsbPrinter() async {
+    if (!usbSupported) return null;
+    final s = _settings();
+    try {
+      return await reconnectPrinter(vendorId: s.usbVendorId, productId: s.usbProductId);
+    } catch (e) {
+      AppLog.warn('USB reconnect: $e');
+      return null;
+    }
+  }
+
+  Future<void> disconnectUsbPrinter() => disconnectUsb();
 
   Future<void> print(ReceiptDoc doc, {String jobName = 'Receipt'}) async {
     final s = _settings();
@@ -45,19 +82,47 @@ class PrinterService {
         } catch (e) {
           throw PrinterException('Printer ${s.printerHost}:${s.printerPort} did not respond ($e).');
         }
+      case PrinterType.usb:
+        await _ensureUsb();
+        try {
+          await sendUsb(EscPosEncoder.render(doc, paperWidth: s.paperWidth));
+        } on UnsupportedError catch (e) {
+          throw PrinterException(e.message ?? 'USB printing is not supported here.');
+        } catch (e) {
+          throw PrinterException('USB printer did not respond ($e).');
+        }
       case PrinterType.bluetooth:
-        throw PrinterException('Bluetooth printers need the native printer plugin, which is not bundled yet. Use a network or system printer.');
+        throw PrinterException('Bluetooth printers need the native printer plugin, which is not bundled yet. Use a network, USB, or system printer.');
     }
     AppLog.info('Printed $jobName via ${s.printerType.name}');
   }
 
-  /// Kicks the cash drawer (drawer is wired to the receipt printer's RJ11 port).
+  /// Kicks the cash drawer (drawer is wired to the receipt printer's kick port).
   Future<void> openDrawer() async {
     final s = _settings();
-    if (s.printerType != PrinterType.network || s.printerHost.trim().isEmpty) {
-      throw PrinterException('A cash drawer needs a network ESC/POS printer configured in Settings → Printer.');
+    switch (s.printerType) {
+      case PrinterType.network:
+        if (s.printerHost.trim().isEmpty) {
+          throw PrinterException('A cash drawer needs a network ESC/POS printer configured in Settings → Printer.');
+        }
+        await sendRaw(s.printerHost.trim(), s.printerPort, EscPosEncoder.drawerOnly());
+      case PrinterType.usb:
+        await _ensureUsb();
+        await sendUsb(EscPosEncoder.drawerOnly());
+      default:
+        throw PrinterException('A cash drawer needs a USB or network ESC/POS printer in Settings → Printer.');
     }
-    await sendRaw(s.printerHost.trim(), s.printerPort, EscPosEncoder.drawerOnly());
+  }
+
+  Future<void> _ensureUsb() async {
+    if (!usbSupported) {
+      throw PrinterException('USB printing needs Chrome over HTTPS (or localhost).');
+    }
+    if (usbConnected) return;
+    final info = await reconnectUsbPrinter();
+    if (info == null) {
+      throw PrinterException('No USB printer connected. Open Settings → Printer and tap Connect USB printer.');
+    }
   }
 
   Future<void> testPrint() => print(
@@ -73,4 +138,13 @@ class PrinterService {
       );
 }
 
-final printerServiceProvider = Provider<PrinterService>((ref) => PrinterService(() => ref.read(settingsProvider)));
+final printerServiceProvider = Provider<PrinterService>((ref) {
+  return PrinterService(
+    () => ref.read(settingsProvider),
+    onUsbPaired: (info) {
+      ref.read(settingsProvider.notifier).update(
+            (s) => s.copyWith(usbVendorId: info.vendorId, usbProductId: info.productId),
+          );
+    },
+  );
+});

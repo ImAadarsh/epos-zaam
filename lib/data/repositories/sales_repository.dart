@@ -23,6 +23,14 @@ class LocalSalesController extends Notifier<List<SaleRecord>> {
   LocalDb get _db => ref.read(localDbProvider);
 
   Future<void> _load() async {
+    const wipeMark = '2026-10-17-pos-sales-cleared';
+    final meta = await _db.getKv('meta') ?? {};
+    if (meta['localSalesWipedAt'] != wipeMark) {
+      await _db.replaceAll(LocalDb.sales, {});
+      await _db.putKv('meta', {...meta, 'localSalesWipedAt': wipeMark});
+      state = const [];
+      return;
+    }
     final rows = await _db.all(LocalDb.sales, finder: Finder(sortOrders: [SortOrder('soldAt', false)]));
     final cutoff = DateTime.now().subtract(const Duration(days: 30));
     final keep = <SaleRecord>[];

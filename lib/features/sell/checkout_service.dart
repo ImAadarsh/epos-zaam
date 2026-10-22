@@ -67,7 +67,7 @@ class CheckoutService {
             quantity: lt.line.quantity,
             unitPence: lt.line.unitPence,
             discountPence: lt.discountPence,
-            taxRate: lt.line.product.taxRate,
+            taxRate: cart.taxRateFor(lt.line),
             taxPence: lt.taxPence,
             totalPence: lt.totalPence,
             costPence: lt.line.product.costPence,

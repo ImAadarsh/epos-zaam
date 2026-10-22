@@ -59,6 +59,7 @@ class SyncService {
       await ref.read(bootstrapProvider.notifier).refresh();
       final register = ref.read(currentRegisterProvider);
       if (register != null) await ref.read(settingsProvider.notifier).applyRegisterDefaults(register.id, register.settings);
+      await ref.read(settingsProvider.notifier).applyOrgVat(ref.read(bootstrapProvider).taxCodes);
     });
     await _ifOnline(() => ref.read(catalogProvider.notifier).sync(full: fullCatalog));
     await _ifOnline(() => ref.read(shiftProvider.notifier).reconcile());

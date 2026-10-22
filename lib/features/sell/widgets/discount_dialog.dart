@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/utils/money.dart';
 import '../../../core/widgets/keypad.dart';
 import '../../../data/models/cart.dart';
+import '../../../data/models/org.dart';
 
 /// Result of the discount dialog: a discount, or `clear` to remove the current one.
 class DiscountResult {
@@ -10,15 +11,25 @@ class DiscountResult {
   final Discount? discount;
 }
 
-Future<DiscountResult?> showDiscountDialog(BuildContext context, {required String title, Discount? current, required int basePence}) {
-  return showDialog<DiscountResult>(context: context, builder: (_) => _DiscountDialog(title: title, current: current, basePence: basePence));
+Future<DiscountResult?> showDiscountDialog(
+  BuildContext context, {
+  required String title,
+  Discount? current,
+  required int basePence,
+  List<DiscountPreset> presets = const [],
+}) {
+  return showDialog<DiscountResult>(
+    context: context,
+    builder: (_) => _DiscountDialog(title: title, current: current, basePence: basePence, presets: presets),
+  );
 }
 
 class _DiscountDialog extends StatefulWidget {
-  const _DiscountDialog({required this.title, this.current, required this.basePence});
+  const _DiscountDialog({required this.title, this.current, required this.basePence, this.presets = const []});
   final String title;
   final Discount? current;
   final int basePence;
+  final List<DiscountPreset> presets;
 
   @override
   State<_DiscountDialog> createState() => _DiscountDialogState();
@@ -67,9 +78,18 @@ class _DiscountDialogState extends State<_DiscountDialog> {
                   style: theme.textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w700)),
               Text('Saves ${formatPence(amount)} of ${formatPence(widget.basePence)}', style: theme.textTheme.bodySmall),
               const SizedBox(height: 8),
-              Wrap(spacing: 8, children: [
-                if (_type == DiscountType.percent)
-                  for (final p in const [5, 10, 15, 20, 50]) ActionChip(label: Text('$p%'), onPressed: () => setState(() => _digits = '$p')),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final p in widget.presets)
+                  ActionChip(
+                    label: Text(p.name.isEmpty ? (p.isAmount ? formatPence((p.value * 100).round()) : '${p.value.round()}%') : p.name),
+                    onPressed: () => setState(() {
+                      _type = p.isAmount ? DiscountType.amount : DiscountType.percent;
+                      _digits = p.isAmount ? '${(p.value * 100).round()}' : '${p.value.round()}';
+                      if (_reason.text.trim().isEmpty) _reason.text = p.name;
+                    }),
+                  ),
+                if (widget.presets.isEmpty && _type == DiscountType.percent)
+                  for (final p in const [5, 10, 20]) ActionChip(label: Text('$p%'), onPressed: () => setState(() => _digits = '$p')),
               ]),
               const SizedBox(height: 8),
               Keypad(

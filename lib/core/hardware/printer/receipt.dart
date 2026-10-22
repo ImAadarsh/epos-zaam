@@ -25,6 +25,18 @@ class ReceiptDoc {
 
 final _date = DateFormat('dd/MM/yyyy HH:mm');
 
+String _vatLabel(SaleRecord sale) {
+  double rate = 0;
+  for (final line in sale.lines) {
+    if (line.taxRate > 0) {
+      rate = line.taxRate;
+      break;
+    }
+  }
+  if (rate <= 0) return 'VAT';
+  return 'VAT ${formatVatPercent(rate)}';
+}
+
 ReceiptDoc buildSaleReceipt(SaleRecord sale, {OrgInfo? org, String footer = '', bool copy = false, bool openDrawer = false}) {
   final rows = <ReceiptRow>[
     ReceiptRow(org?.name ?? 'Zaam', '', ReceiptStyle.large),
@@ -57,8 +69,8 @@ ReceiptDoc buildSaleReceipt(SaleRecord sale, {OrgInfo? org, String footer = '', 
     const ReceiptRow('', '', ReceiptStyle.divider),
     ReceiptRow('Subtotal', formatPence(sale.subtotalPence)),
     if (sale.discountPence > 0) ReceiptRow('Discounts', '-${formatPence(sale.discountPence)}'),
+    if (sale.taxPence > 0) ReceiptRow(_vatLabel(sale), formatPence(sale.taxPence)),
     ReceiptRow('TOTAL', formatPence(sale.totalPence), ReceiptStyle.large),
-    ReceiptRow('Incl. VAT', formatPence(sale.taxPence), ReceiptStyle.small),
     const ReceiptRow('', '', ReceiptStyle.gap),
   ]);
   for (final p in sale.payments) {

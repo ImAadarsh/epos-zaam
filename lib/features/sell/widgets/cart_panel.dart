@@ -5,6 +5,7 @@ import '../../../core/scanner/camera_scanner.dart';
 import '../../../core/utils/money.dart';
 import '../../../core/widgets/dialogs.dart';
 import '../../../data/models/cart.dart';
+import '../../../data/models/org.dart';
 import '../../../data/repositories/bootstrap_repository.dart';
 import '../../../data/repositories/parked_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
@@ -12,6 +13,7 @@ import '../../customers/customer_picker.dart';
 import '../../sales/saved_sales_screen.dart';
 import '../cart_controller.dart';
 import '../sell_actions.dart';
+import 'vat_dialog.dart';
 
 /// The basket: lines, totals and the actions around a sale.
 class CartPanel extends ConsumerWidget {
@@ -122,6 +124,32 @@ class CartPanel extends ConsumerWidget {
                   const SizedBox(width: 8),
                   ActionChip(avatar: const Icon(Icons.table_restaurant_outlined, size: 18), label: Text(cart.tableRef == null ? 'Table' : 'Table ${cart.tableRef}'), onPressed: () => _table(context, ref)),
                 ],
+                const SizedBox(width: 8),
+                FilterChip(
+                  avatar: Icon(cart.applyVat ? Icons.percent : Icons.money_off, size: 18),
+                  label: Text(
+                    !cart.applyVat
+                        ? 'VAT off'
+                        : cart.vatRate == null
+                            ? 'VAT on'
+                            : 'VAT ${formatVatPercent(cart.vatRate!)}',
+                  ),
+                  selected: cart.applyVat,
+                  onSelected: (on) {
+                    if (on) {
+                      editSaleVat(context, ref, enable: true);
+                    } else {
+                      ref.read(cartProvider.notifier).setVat(enabled: false);
+                    }
+                  },
+                ),
+                const SizedBox(width: 8),
+                FilterChip(
+                  avatar: const Icon(Icons.sell_outlined, size: 18),
+                  label: Text(cart.cartDiscount == null ? 'Discount' : 'Discount ${cart.cartDiscount!.label(formatPence)}'),
+                  selected: cart.cartDiscount != null,
+                  onSelected: cart.isEmpty ? null : (_) => editCartDiscount(context, ref),
+                ),
               ],
             ),
           ),
@@ -152,8 +180,24 @@ class CartPanel extends ConsumerWidget {
             child: Column(
               children: [
                 _TotalRow('Subtotal', formatPence(totals.subtotalPence)),
-                if (totals.discountPence > 0) _TotalRow('Discounts', '-${formatPence(totals.discountPence)}', color: theme.colorScheme.error),
-                _TotalRow(settings.pricesIncludeTax ? 'VAT included' : 'VAT', formatPence(totals.taxPence), muted: true),
+                InkWell(
+                  onTap: cart.isEmpty ? null : () => editCartDiscount(context, ref),
+                  child: totals.discountPence > 0
+                      ? _TotalRow('Discount', '-${formatPence(totals.discountPence)}', color: theme.colorScheme.error)
+                      : _TotalRow('Discount', 'Add', muted: true),
+                ),
+                InkWell(
+                  onTap: () => editSaleVat(context, ref, enable: true),
+                  child: _TotalRow(
+                    !cart.applyVat
+                        ? 'VAT off'
+                        : settings.pricesIncludeTax
+                            ? (cart.vatRate == null ? 'VAT included' : 'VAT included (${formatVatPercent(cart.vatRate!)})')
+                            : (cart.vatRate == null ? 'VAT' : 'VAT (${formatVatPercent(cart.vatRate!)})'),
+                    formatPence(totals.taxPence),
+                    muted: true,
+                  ),
+                ),
                 if (cart.note != null && cart.note!.isNotEmpty)
                   Align(alignment: Alignment.centerLeft, child: Padding(padding: const EdgeInsets.only(top: 4), child: Text('Note: ${cart.note}', style: theme.textTheme.bodySmall))),
               ],

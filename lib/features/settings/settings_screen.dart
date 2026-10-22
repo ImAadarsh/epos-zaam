@@ -14,6 +14,8 @@ import '../../data/models/settings.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/session.dart';
 import '../../data/repositories/settings_repository.dart';
+import '../../data/models/org.dart';
+import '../sell/widgets/vat_dialog.dart';
 import 'staff_pins_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -107,7 +109,29 @@ class SettingsScreen extends ConsumerWidget {
                 toggle('QR scanner after order', s.qrAfterOrder, (v) => set((x) => x.copyWith(qrAfterOrder: v))),
                 toggle('Table QR button', s.tableQrButton, (v) => set((x) => x.copyWith(tableQrButton: v))),
                 toggle('Table timers', s.tableTimers, (v) => set((x) => x.copyWith(tableTimers: v)), subtitle: 'Show how long saved sales have been open'),
-                toggle('Prices include VAT', s.pricesIncludeTax, (v) => set((x) => x.copyWith(pricesIncludeTax: v))),
+                toggle(
+                  'VAT',
+                  s.vatEnabled,
+                  (v) => editSettingsVat(context, ref, enable: v),
+                  subtitle: !s.vatEnabled
+                      ? 'Off — sales charge no VAT'
+                      : s.vatRate == null
+                          ? 'On — each product uses its own rate'
+                          : 'On — ${formatVatPercent(s.vatRate!)} on every item',
+                ),
+                if (s.vatEnabled)
+                  ListTile(
+                    title: const Text('VAT rate'),
+                    subtitle: Text(
+                      s.vatRate == null
+                          ? 'Each product uses its own rate. Tap to use 20% or an organisation tax code.'
+                          : '${formatVatPercent(s.vatRate!)} · tap to pick 20% or an organisation tax code',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => editSettingsVat(context, ref, enable: true),
+                  ),
+                toggle('Prices include VAT', s.pricesIncludeTax, (v) => set((x) => x.copyWith(pricesIncludeTax: v)),
+                    subtitle: 'On: shelf prices already include VAT (UK retail). Off: VAT is added on top.'),
                 ListTile(
                   title: const Text('Cashier discount limit'),
                   subtitle: Text('${s.maxCashierDiscountPercent}% · higher discounts need a manager PIN'),
@@ -167,7 +191,46 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                   toggle('Open drawer on cash sales', s.openDrawerOnCash, (v) => set((x) => x.copyWith(openDrawerOnCash: v))),
                   if (!ref.read(printerServiceProvider).networkSupported)
-                    const ListTile(leading: Icon(Icons.warning_amber), title: Text('Browsers cannot reach network printers. Use the system print dialog on web.')),
+                    const ListTile(leading: Icon(Icons.warning_amber), title: Text('Browsers cannot reach network printers. Use USB ESC/POS (Chrome) or the system print dialog on web.')),
+                ],
+                if (s.printerType == PrinterType.usb) ...[
+                  ListTile(
+                    leading: Icon(ref.read(printerServiceProvider).usbIsConnected ? Icons.usb : Icons.usb_off),
+                    title: Text(ref.read(printerServiceProvider).usbIsConnected ? 'Connected' : 'Not connected'),
+                    subtitle: Text(() {
+                      final p = ref.read(printerServiceProvider);
+                      if (p.usbPrinter != null) return p.usbPrinter!.label;
+                      if (s.usbVendorId != 0) {
+                        return 'Last paired ${s.usbVendorId.toRadixString(16).padLeft(4, '0')}:${s.usbProductId.toRadixString(16).padLeft(4, '0')} — tap Connect to use';
+                      }
+                      return 'Chrome + HTTPS (or localhost). Pair once; Print after sales uses this printer.';
+                    }()),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.link),
+                    title: const Text('Connect USB printer'),
+                    subtitle: const Text('Browser will ask you to pick the device'),
+                    onTap: () async {
+                      try {
+                        final info = await ref.read(printerServiceProvider).connectUsbPrinter();
+                        if (context.mounted) showMessage(context, 'Connected: ${info.label}');
+                      } catch (e) {
+                        if (context.mounted) showMessage(context, '$e', error: true);
+                      }
+                    },
+                  ),
+                  if (ref.read(printerServiceProvider).usbIsConnected || s.usbVendorId != 0)
+                    ListTile(
+                      leading: const Icon(Icons.link_off),
+                      title: const Text('Disconnect'),
+                      onTap: () async {
+                        await ref.read(printerServiceProvider).disconnectUsbPrinter();
+                        if (context.mounted) showMessage(context, 'USB printer disconnected');
+                      },
+                    ),
+                  toggle('Open drawer on cash sales', s.openDrawerOnCash, (v) => set((x) => x.copyWith(openDrawerOnCash: v))),
+                  if (!ref.read(printerServiceProvider).usbPrintingSupported)
+                    const ListTile(leading: Icon(Icons.warning_amber), title: Text('WebUSB needs Chrome over HTTPS or localhost.')),
                 ],
                 ListTile(
                   title: const Text('Paper width'),

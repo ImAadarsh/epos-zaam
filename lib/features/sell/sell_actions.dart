@@ -7,6 +7,7 @@ import '../../core/widgets/dialogs.dart';
 import '../../core/widgets/manager_override.dart';
 import '../../data/models/cart.dart';
 import '../../data/models/catalog.dart';
+import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import 'cart_controller.dart';
@@ -93,7 +94,13 @@ Future<void> editCartDiscount(BuildContext context, WidgetRef ref) async {
   final cart = ref.read(cartProvider);
   final totals = ref.read(cartTotalsProvider);
   final base = totals.subtotalPence - totals.itemDiscountPence;
-  final res = await showDiscountDialog(context, title: 'Cart discount', current: cart.cartDiscount, basePence: base);
+  final res = await showDiscountDialog(
+    context,
+    title: 'Cart discount',
+    current: cart.cartDiscount,
+    basePence: base,
+    presets: ref.read(bootstrapProvider).discountPresets,
+  );
   if (res == null || !context.mounted) return;
   final d = res.discount;
   if (d != null && _overLimit(d, base, ref.read(settingsProvider).maxCashierDiscountPercent)) {
@@ -169,7 +176,13 @@ class _LineEditor extends ConsumerWidget {
                   icon: const Icon(Icons.sell_outlined),
                   label: Text(line.discount == null ? 'Discount' : 'Discount ${line.discount!.label(formatPence)}'),
                   onPressed: () async {
-                    final res = await showDiscountDialog(context, title: 'Item discount', current: line.discount, basePence: line.grossPence);
+                    final res = await showDiscountDialog(
+                      context,
+                      title: 'Item discount',
+                      current: line.discount,
+                      basePence: line.grossPence,
+                      presets: ref.read(bootstrapProvider).discountPresets,
+                    );
                     if (res == null || !context.mounted) return;
                     final d = res.discount;
                     if (d != null && _overLimit(d, line.grossPence, settings.maxCashierDiscountPercent)) {

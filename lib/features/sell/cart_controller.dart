@@ -15,12 +15,21 @@ class CartController extends Notifier<Cart> {
   @override
   Cart build() {
     final j = ref.read(initialDataProvider).cart;
-    if (j == null) return const Cart();
+    if (j == null) return _fromSettings();
     try {
       return Cart.fromJson(j);
     } catch (_) {
-      return const Cart();
+      return _fromSettings();
     }
+  }
+
+  Cart _fromSettings() {
+    final s = ref.read(settingsProvider);
+    return Cart(
+      applyVat: s.vatEnabled,
+      vatRate: s.vatRate,
+      vatTaxCodeId: s.vatTaxCodeId.isEmpty ? null : s.vatTaxCodeId,
+    );
   }
 
   void _set(Cart cart) {
@@ -94,7 +103,7 @@ class CartController extends Notifier<Cart> {
   /// Removing the last item starts a fresh order, so its customer never carries over.
   void removeLine(String lineId) {
     final lines = state.lines.where((l) => l.id != lineId).toList();
-    _set(lines.isEmpty && state.parkedId == null ? const Cart() : state.copyWith(lines: lines));
+    _set(lines.isEmpty && state.parkedId == null ? _fromSettings() : state.copyWith(lines: lines));
   }
 
   void setCartDiscount(Discount? discount) =>
@@ -113,7 +122,21 @@ class CartController extends Notifier<Cart> {
 
   void restore(Cart cart) => _set(cart);
 
-  void clear() => _set(const Cart());
+  void setVat({required bool enabled, double? rate, String? taxCodeId}) {
+    if (!enabled) {
+      _set(state.copyWith(applyVat: false, clearVatRate: true, clearVatTaxCodeId: true));
+      return;
+    }
+    _set(state.copyWith(
+      applyVat: true,
+      vatRate: rate,
+      clearVatRate: rate == null,
+      vatTaxCodeId: taxCodeId,
+      clearVatTaxCodeId: taxCodeId == null || taxCodeId.isEmpty,
+    ));
+  }
+
+  void clear() => _set(_fromSettings());
 
   CartTotals get totals => computeTotals(state, pricesIncludeTax: ref.read(settingsProvider).pricesIncludeTax);
 }

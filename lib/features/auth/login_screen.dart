@@ -7,6 +7,7 @@ import '../../core/widgets/brand.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/session.dart';
+import '../../data/repositories/settings_repository.dart';
 
 /// Signs this device in with a Zaam ERP account (admin, manager or POS user).
 class LoginScreen extends ConsumerStatefulWidget {
@@ -45,6 +46,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       await ref.read(sessionProvider.notifier).login(baseUrl: _server.text, email: _email.text, password: _password.text);
       await ref.read(bootstrapProvider.notifier).refresh();
+      await ref.read(settingsProvider.notifier).applyOrgVat(ref.read(bootstrapProvider).taxCodes);
       ref.read(catalogProvider.notifier).sync(full: true);
     } catch (e) {
       if (mounted) setState(() => _error = errorMessage(e));
