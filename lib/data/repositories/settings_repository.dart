@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/storage/local_db.dart';
@@ -7,11 +8,25 @@ import '../models/settings.dart';
 import 'initial_data.dart';
 import 'session.dart';
 
+/// On Chrome/web, network and bluetooth printers cannot work — prefer USB ESC/POS.
+PosSettings _webPrinterDefault(PosSettings s) {
+  if (!kIsWeb) return s;
+  if (s.printerType == PrinterType.network || s.printerType == PrinterType.bluetooth) {
+    return s.copyWith(printerType: PrinterType.usb);
+  }
+  return s;
+}
+
 class SettingsController extends Notifier<PosSettings> {
   @override
   PosSettings build() {
     final j = ref.read(initialDataProvider).settings;
-    return j == null ? const PosSettings() : PosSettings.fromJson(j);
+    final loaded = j == null ? const PosSettings() : PosSettings.fromJson(j);
+    final fixed = _webPrinterDefault(loaded);
+    if (fixed.printerType != loaded.printerType) {
+      Future.microtask(() => update((_) => fixed));
+    }
+    return fixed;
   }
 
   Future<void> update(PosSettings Function(PosSettings s) change) async {
@@ -27,7 +42,7 @@ class SettingsController extends Notifier<PosSettings> {
     final applied = await db.getKv('register_defaults');
     if (registerSettings.isEmpty || applied?['registerId'] == registerId) return;
     final merged = {...state.toJson(), ...registerSettings, 'sumupApiKey': state.sumupApiKey};
-    state = PosSettings.fromJson(merged);
+    state = _webPrinterDefault(PosSettings.fromJson(merged));
     await db.putKv('settings', state.toJson());
     await db.putKv('register_defaults', {'registerId': registerId});
   }

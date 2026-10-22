@@ -52,7 +52,7 @@ class PosSettings {
     this.tipsEnabled = false,
     this.maxCashierDiscountPercent = 10,
     this.autoLockSeconds = 0,
-    this.printerType = PrinterType.system,
+    this.printerType = PrinterType.usb,
     this.printerHost = '',
     this.printerPort = 9100,
     this.usbVendorId = 0,
