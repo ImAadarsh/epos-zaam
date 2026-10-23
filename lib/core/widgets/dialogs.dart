@@ -83,6 +83,27 @@ Future<int?> promptAmount(BuildContext context, {required String title, int? ini
   );
 }
 
+/// Integer quantity keypad (same layout as [promptAmount], shows a whole number).
+Future<int?> promptQuantity(
+  BuildContext context, {
+  required String title,
+  int? initial,
+  String confirmLabel = 'Set quantity',
+  String? message,
+  int maxDigits = 4,
+}) {
+  return showDialog<int>(
+    context: context,
+    builder: (ctx) => _QuantityDialog(
+      title: title,
+      initial: initial,
+      confirmLabel: confirmLabel,
+      message: message,
+      maxDigits: maxDigits,
+    ),
+  );
+}
+
 class _AmountDialog extends StatefulWidget {
   const _AmountDialog({required this.title, this.initialPence, required this.confirmLabel, this.message, required this.allowZero});
   final String title;
@@ -124,6 +145,75 @@ class _AmountDialogState extends State<_AmountDialog> {
               onEnter: _submit,
             ),
           ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _submit, child: Text(widget.confirmLabel)),
+      ],
+    );
+  }
+}
+
+class _QuantityDialog extends StatefulWidget {
+  const _QuantityDialog({
+    required this.title,
+    this.initial,
+    required this.confirmLabel,
+    this.message,
+    required this.maxDigits,
+  });
+  final String title;
+  final int? initial;
+  final String confirmLabel;
+  final String? message;
+  final int maxDigits;
+
+  @override
+  State<_QuantityDialog> createState() => _QuantityDialogState();
+}
+
+class _QuantityDialogState extends State<_QuantityDialog> {
+  /// Empty means the cashier cleared; display shows 0 until they type.
+  late String _digits = widget.initial == null || widget.initial! <= 0 ? '' : '${widget.initial}';
+
+  int get _qty => int.tryParse(_digits) ?? 0;
+
+  void _append(String d) {
+    setState(() {
+      final next = _digits + d;
+      if (next.length > widget.maxDigits) return;
+      // Drop a lone leading zero so typing "5" after clear stays "5", not "05".
+      _digits = next.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+    });
+  }
+
+  void _submit() {
+    if (_qty <= 0) return;
+    Navigator.pop(context, _qty);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 340,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.message != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(widget.message!)),
+              Text('$_qty', style: Theme.of(context).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 12),
+              Keypad(
+                showDoubleZero: true,
+                onDigit: _append,
+                onBackspace: () => setState(() => _digits = _digits.isEmpty ? '' : _digits.substring(0, _digits.length - 1)),
+                onEnter: _submit,
+              ),
+            ],
+          ),
         ),
       ),
       actions: [

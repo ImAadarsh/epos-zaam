@@ -119,6 +119,14 @@ Future<void> editCartLine(BuildContext context, WidgetRef ref, CartLine line) as
   );
 }
 
+/// Opens the "New quantity" keypad and applies the result via [CartController.setQuantity].
+Future<void> editLineQuantity(BuildContext context, WidgetRef ref, CartLine line) async {
+  final q = await promptQuantity(context, title: 'New quantity', initial: line.quantity, confirmLabel: 'Set quantity');
+  if (q == null || !context.mounted) return;
+  final error = ref.read(cartProvider.notifier).setQuantity(line.id, q);
+  if (error != null) showMessage(context, error, error: true);
+}
+
 class _LineEditor extends ConsumerWidget {
   const _LineEditor({required this.lineId});
   final String lineId;
@@ -148,14 +156,12 @@ class _LineEditor extends ConsumerWidget {
                 const Spacer(),
                 IconButton.filledTonal(iconSize: 28, onPressed: () => ctrl.increment(line.id, -1), icon: const Icon(Icons.remove)),
                 InkWell(
-                  onTap: () async {
-                    final q = await promptText(context, title: 'Quantity', initial: '${line.quantity}', keyboardType: TextInputType.number, confirmLabel: 'Set');
-                    final n = int.tryParse(q ?? '');
-                    if (n == null) return;
-                    final error = ctrl.setQuantity(line.id, n);
-                    if (error != null && context.mounted) showMessage(context, error, error: true);
-                  },
-                  child: SizedBox(width: 64, child: Text('${line.quantity}', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall)),
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => editLineQuantity(context, ref, line),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: SizedBox(width: 48, child: Text('${line.quantity}', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall)),
+                  ),
                 ),
                 IconButton.filledTonal(
                   iconSize: 28,
@@ -190,6 +196,11 @@ class _LineEditor extends ConsumerWidget {
                     }
                     ctrl.updateLine(d == null ? line.copyWith(clearDiscount: true) : line.copyWith(discount: d));
                   },
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.pin_outlined),
+                  label: const Text('Change quantity'),
+                  onPressed: () => editLineQuantity(context, ref, line),
                 ),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.edit_outlined),

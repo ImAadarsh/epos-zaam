@@ -302,7 +302,17 @@ class _CartLineTile extends ConsumerWidget {
           child: Row(
             children: [
               IconButton(visualDensity: VisualDensity.compact, onPressed: () => ctrl.increment(line.id, -1), icon: const Icon(Icons.remove_circle_outline)),
-              SizedBox(width: 28, child: Text('${line.quantity}', textAlign: TextAlign.center, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700))),
+              InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => editLineQuantity(context, ref, line),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minWidth: 36),
+                    child: Text('${line.quantity}', textAlign: TextAlign.center, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              ),
               IconButton(
                 visualDensity: VisualDensity.compact,
                 onPressed: () {
