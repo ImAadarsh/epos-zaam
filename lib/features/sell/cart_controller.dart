@@ -79,6 +79,16 @@ class CartController extends Notifier<Cart> {
 
   void updateLine(CartLine line) => _set(state.copyWith(lines: [for (final l in state.lines) l.id == line.id ? line : l]));
 
+  /// After a permanent catalogue price change, refresh matching lines and drop sale-only overrides.
+  void applyCatalogProduct(Product product, {bool clearPriceOverride = true}) {
+    _set(state.copyWith(lines: [
+      for (final l in state.lines)
+        l.product.variantId == product.variantId
+            ? l.copyWith(product: product, clearPriceOverride: clearPriceOverride)
+            : l,
+    ]));
+  }
+
   /// Returns an error message (and leaves the line unchanged) when stock would be exceeded.
   String? setQuantity(String lineId, int quantity) {
     if (quantity <= 0) {

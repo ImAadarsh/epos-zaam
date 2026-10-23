@@ -1,18 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/network/api_exception.dart';
 import '../../core/security/permissions.dart';
+import '../../core/sync/connectivity.dart';
 import '../../core/utils/money.dart';
 import '../../core/widgets/dialogs.dart';
 import '../../core/widgets/manager_override.dart';
 import '../../data/models/cart.dart';
 import '../../data/models/catalog.dart';
+import '../../data/models/org.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import 'cart_controller.dart';
 import 'widgets/discount_dialog.dart';
 import 'widgets/product_options_dialog.dart';
+
+enum _PriceChangeScope { thisSaleOnly, permanent }
 
 bool _overLimit(Discount d, int basePence, int maxPercent) {
   if (basePence <= 0) return false;
@@ -205,13 +210,7 @@ class _LineEditor extends ConsumerWidget {
                 OutlinedButton.icon(
                   icon: const Icon(Icons.edit_outlined),
                   label: Text(line.priceOverridePence == null ? 'Change price' : 'Price changed'),
-                  onPressed: () async {
-                    if (!await requirePermission(context, ref, Perm.priceOverride)) return;
-                    if (!context.mounted) return;
-                    final p = await promptAmountFor(context, line);
-                    if (p == null) return;
-                    ctrl.updateLine(p < 0 ? line.copyWith(clearPriceOverride: true) : line.copyWith(priceOverridePence: p));
-                  },
+                  onPressed: () => editLinePrice(context, ref, line),
                 ),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.sticky_note_2_outlined),
@@ -240,12 +239,114 @@ class _LineEditor extends ConsumerWidget {
   }
 }
 
-/// Returns the new unit price in pence, -1 to restore the catalogue price, or null.
-Future<int?> promptAmountFor(BuildContext context, CartLine line) async {
+/// Change price: choose this-sale override vs permanent catalogue update, then keypad.
+Future<void> editLinePrice(BuildContext context, WidgetRef ref, CartLine line) async {
+  if (!await requirePermission(context, ref, Perm.priceOverride)) return;
+  if (!context.mounted) return;
+
   if (line.priceOverridePence != null) {
-    final restore = await confirm(context, title: 'Price already changed', message: 'Restore the catalogue price of this item?', confirmLabel: 'Restore');
-    if (restore) return -1;
-    if (!context.mounted) return null;
+    final restore = await confirm(
+      context,
+      title: 'Price already changed for this sale',
+      message: 'Restore the catalogue price of ${formatPence(line.product.effectivePricePence)} on this line?',
+      confirmLabel: 'Restore',
+    );
+    if (restore) {
+      ref.read(cartProvider.notifier).updateLine(line.copyWith(clearPriceOverride: true));
+      return;
+    }
+    if (!context.mounted) return;
   }
-  return promptAmount(context, title: 'New unit price', initialPence: line.priceOverridePence ?? line.product.effectivePricePence, confirmLabel: 'Set price');
+
+  final scope = await _pickPriceChangeScope(context, ref);
+  if (scope == null || !context.mounted) return;
+
+  if (scope == _PriceChangeScope.permanent) {
+    if (!await requirePermission(context, ref, Perm.editCatalogPrice)) return;
+    if (!context.mounted) return;
+    if (!ref.read(onlineProvider)) {
+      showMessage(context, 'Permanently changing the product price needs an online connection.', error: true);
+      return;
+    }
+  }
+
+  final pence = await promptAmount(
+    context,
+    title: scope == _PriceChangeScope.permanent ? 'New product price' : 'New unit price',
+    initialPence: line.priceOverridePence ?? line.product.effectivePricePence,
+    confirmLabel: scope == _PriceChangeScope.permanent ? 'Save permanently' : 'Set price',
+    message: scope == _PriceChangeScope.permanent
+        ? 'This updates the catalogue sell price for future sales too.'
+        : 'Applies to this sale only. The product grid price stays the same.',
+  );
+  if (pence == null || !context.mounted) return;
+
+  final ctrl = ref.read(cartProvider.notifier);
+  if (scope == _PriceChangeScope.thisSaleOnly) {
+    ctrl.updateLine(line.copyWith(priceOverridePence: pence));
+    return;
+  }
+
+  try {
+    final updated = await ref.read(catalogProvider.notifier).setPermanentSellPrice(line.product.variantId, pence);
+    if (!context.mounted) return;
+    ctrl.applyCatalogProduct(updated);
+    showMessage(context, 'Product price saved as ${formatPence(updated.pricePence)}.');
+  } catch (e) {
+    if (context.mounted) {
+      showMessage(context, 'Could not save permanent price: ${errorMessage(e)}. Cart and catalogue were left unchanged.', error: true);
+    }
+  }
+}
+
+Future<_PriceChangeScope?> _pickPriceChangeScope(BuildContext context, WidgetRef ref) {
+  final staff = ref.read(currentStaffProvider);
+  final canPermanent = can(staff, Perm.editCatalogPrice);
+  final hasManagerPin = ref.read(bootstrapProvider).staff.any((s) => can(s, Perm.editCatalogPrice) && s.hasPin);
+
+  return showDialog<_PriceChangeScope>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Change price'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('How should this price change apply?'),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, _PriceChangeScope.thisSaleOnly),
+              child: const Text('This sale only'),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.tonal(
+              onPressed: canPermanent || hasManagerPin
+                  ? () => Navigator.pop(ctx, _PriceChangeScope.permanent)
+                  : null,
+              child: const Text('Permanently change product price'),
+            ),
+            if (!canPermanent && !hasManagerPin)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  'Permanent catalogue changes need a ${PosRole.manager.name}. Set a manager PIN in Settings → Staff PINs.',
+                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(color: Theme.of(ctx).colorScheme.error),
+                ),
+              )
+            else if (!canPermanent)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  'A manager PIN will be required to save permanently.',
+                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel'))],
+    ),
+  );
 }

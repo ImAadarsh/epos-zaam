@@ -58,6 +58,7 @@ class CartLine {
   bool get isPlain => modifiers.isEmpty && priceOverridePence == null && discount == null && (note == null || note!.isEmpty);
 
   CartLine copyWith({
+    Product? product,
     int? quantity,
     List<Modifier>? modifiers,
     int? priceOverridePence,
@@ -68,7 +69,7 @@ class CartLine {
   }) =>
       CartLine(
         id: id,
-        product: product,
+        product: product ?? this.product,
         quantity: quantity ?? this.quantity,
         modifiers: modifiers ?? this.modifiers,
         priceOverridePence: clearPriceOverride ? null : (priceOverridePence ?? this.priceOverridePence),

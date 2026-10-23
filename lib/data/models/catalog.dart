@@ -72,7 +72,16 @@ class Product {
 
   String get displayName => variantLabel == null ? name : '$name – $variantLabel';
 
-  Product copyWith({bool? available, int? stock, bool clearStock = false}) => Product(
+  Product copyWith({
+    bool? available,
+    int? stock,
+    bool clearStock = false,
+    int? pricePence,
+    int? promoPricePence,
+    bool clearPromoPrice = false,
+    String? updatedAt,
+  }) =>
+      Product(
         variantId: variantId,
         catalogItemId: catalogItemId,
         sku: sku,
@@ -83,8 +92,8 @@ class Product {
         subCategory: subCategory,
         brand: brand,
         description: description,
-        pricePence: pricePence,
-        promoPricePence: promoPricePence,
+        pricePence: pricePence ?? this.pricePence,
+        promoPricePence: clearPromoPrice ? null : (promoPricePence ?? this.promoPricePence),
         costPence: costPence,
         taxRate: taxRate,
         taxCode: taxCode,
@@ -94,7 +103,7 @@ class Product {
         available: available ?? this.available,
         active: active,
         modifierGroupIds: modifierGroupIds,
-        updatedAt: updatedAt,
+        updatedAt: updatedAt ?? this.updatedAt,
       );
 
   /// Parses the `/api/pos/catalog` product shape.

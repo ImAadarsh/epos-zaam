@@ -4,6 +4,7 @@ import '../../core/network/api_exception.dart';
 import '../../core/storage/local_db.dart';
 import '../../core/sync/connectivity.dart';
 import '../../core/utils/app_log.dart';
+import '../../core/utils/money.dart';
 import '../models/catalog.dart';
 import 'session.dart';
 
@@ -236,6 +237,33 @@ class CatalogController extends Notifier<CatalogState> {
     final updated = p.copyWith(available: available);
     state = state.copyWith(products: {...state.products, variantId: updated});
     await _db.put(LocalDb.products, variantId, updated.toJson());
+  }
+
+  /// Updates the local cache after a permanent catalogue price change.
+  Future<Product?> applyLocalPrice(String variantId, int pricePence) async {
+    final p = state.products[variantId];
+    if (p == null) return null;
+    final updated = p.copyWith(pricePence: pricePence, clearPromoPrice: true, updatedAt: DateTime.now().toIso8601String());
+    state = state.copyWith(products: {...state.products, variantId: updated});
+    await _db.put(LocalDb.products, variantId, updated.toJson());
+    return updated;
+  }
+
+  /// Permanently sets the sell price via `PATCH /api/pos/products/:variantId/price`, then updates the local cache.
+  /// Throws [ApiException] on failure — caller must not change the cart until this succeeds.
+  Future<Product> setPermanentSellPrice(String variantId, int pricePence) async {
+    final session = ref.read(sessionProvider);
+    final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).patch(
+          '/api/pos/products/$variantId/price',
+          data: {
+            'price': fromPence(pricePence),
+            'registerId': session.registerId,
+          },
+        ) as Map);
+    final serverPence = res['price'] != null ? toPence(res['price'] as num?) : pricePence;
+    final updated = await applyLocalPrice(variantId, serverPence);
+    if (updated == null) throw ApiException('Product left the local catalogue');
+    return updated;
   }
 
   Future<void> setModifierAvailability(String modifierId, bool available) async {
