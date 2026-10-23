@@ -231,6 +231,14 @@ class SettingsScreen extends ConsumerWidget {
                   toggle('Open drawer on cash sales', s.openDrawerOnCash, (v) => set((x) => x.copyWith(openDrawerOnCash: v))),
                   if (!ref.read(printerServiceProvider).usbPrintingSupported)
                     const ListTile(leading: Icon(Icons.warning_amber), title: Text('WebUSB needs Chrome over HTTPS or localhost.')),
+                  const ListTile(
+                    leading: Icon(Icons.info_outline),
+                    title: Text('Windows “Access denied”?'),
+                    subtitle: Text(
+                      'The OS printer driver often locks the USB port. Close other apps using the printer, '
+                      'then install WinUSB for that device with Zadig (zadig.akeo.ie), unplug/replug, and Connect again.',
+                    ),
+                  ),
                 ],
                 ListTile(
                   title: const Text('Paper width'),

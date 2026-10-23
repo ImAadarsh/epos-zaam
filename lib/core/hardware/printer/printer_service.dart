@@ -47,8 +47,19 @@ class PrinterService {
     } on UnsupportedError catch (e) {
       throw PrinterException(e.message ?? 'USB printing is not supported here.');
     } catch (e) {
-      throw PrinterException('Could not connect USB printer ($e).');
+      throw PrinterException(_usbConnectError(e));
     }
+  }
+
+  static String _usbConnectError(Object e) {
+    final s = e.toString();
+    if (s.contains('Access denied') || s.contains('SecurityError')) {
+      return 'Windows is blocking the USB printer (Access denied). '
+          'Close any print queue / POS app using it, then in Device Manager find the printer '
+          '(often under "USB Printing Support"), and use Zadig to install the WinUSB driver for that device. '
+          'Unplug/replug, reopen Chrome, and tap Connect again.';
+    }
+    return 'Could not connect USB printer ($e).';
   }
 
   /// Re-opens a previously permitted WebUSB device (no picker).
