@@ -13,7 +13,7 @@ import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import 'checkout_service.dart';
 
-/// Shows change due and offers a printed or emailed receipt.
+/// Shown after payment succeeds. Auto-prints when [PosSettings.autoPrintReceipts] is on.
 class SaleCompleteScreen extends ConsumerStatefulWidget {
   const SaleCompleteScreen({super.key, required this.sale});
   final SaleRecord sale;
@@ -24,33 +24,66 @@ class SaleCompleteScreen extends ConsumerStatefulWidget {
 
 class _SaleCompleteScreenState extends ConsumerState<SaleCompleteScreen> {
   String? _receiptDone;
+  bool _printedOk = false;
+  bool _autoPrintStarted = false;
+
+  static const _autoPrintFailMsg =
+      'Sale saved. Printer not connected / print failed — use Print to retry';
 
   @override
   void initState() {
     super.initState();
-    Future.microtask(() async {
-      final s = ref.read(settingsProvider);
-      if (!s.receiptPrompt) {
-        switch (s.receiptDefault) {
-          case ReceiptDefault.print:
-            await _print();
-          case ReceiptDefault.email:
-            if (widget.sale.customerEmail != null) await _email(widget.sale.customerEmail!);
-          case ReceiptDefault.ask:
-          case ReceiptDefault.none:
-            break;
-        }
-      }
-      if (s.qrAfterOrder && mounted && cameraScanSupported) await _scanQr();
-    });
+    Future.microtask(_afterSale);
   }
 
-  Future<void> _print() async {
+  Future<void> _afterSale() async {
+    final s = ref.read(settingsProvider);
+    // Auto-print once on success (default on). Sale is already saved — never roll back on print failure.
+    if (s.autoPrintReceipts) {
+      await _print(auto: true);
+    } else if (!s.receiptPrompt) {
+      switch (s.receiptDefault) {
+        case ReceiptDefault.print:
+          await _print(auto: true);
+        case ReceiptDefault.email:
+          if (widget.sale.customerEmail != null) await _email(widget.sale.customerEmail!);
+        case ReceiptDefault.ask:
+        case ReceiptDefault.none:
+          break;
+      }
+    }
+    if (s.qrAfterOrder && mounted && cameraScanSupported) await _scanQr();
+  }
+
+  Future<void> _print({bool auto = false}) async {
+    if (auto) {
+      if (_autoPrintStarted) return;
+      _autoPrintStarted = true;
+    }
+    final settings = ref.read(settingsProvider);
+    if (settings.printerType == PrinterType.none) {
+      if (!mounted) return;
+      if (auto) {
+        setState(() => _receiptDone = _autoPrintFailMsg);
+        showMessage(context, _autoPrintFailMsg, error: true);
+      } else {
+        showMessage(context, 'No printer configured. Open Settings → Printer.', error: true);
+      }
+      return;
+    }
     try {
       await ref.read(checkoutServiceProvider).printReceipt(widget.sale);
-      if (mounted) setState(() => _receiptDone = 'Receipt printed');
+      if (mounted) {
+        setState(() {
+          _printedOk = true;
+          _receiptDone = 'Receipt printed';
+        });
+      }
     } catch (e) {
-      if (mounted) showMessage(context, 'Print failed: $e', error: true);
+      if (!mounted) return;
+      final msg = auto ? _autoPrintFailMsg : 'Print failed: $e';
+      setState(() => _receiptDone = auto ? _autoPrintFailMsg : _receiptDone);
+      showMessage(context, msg, error: true);
     }
   }
 
@@ -86,7 +119,7 @@ class _SaleCompleteScreenState extends ConsumerState<SaleCompleteScreen> {
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.enter): _newSale,
-        const SingleActivator(LogicalKeyboardKey.keyP): _print,
+        const SingleActivator(LogicalKeyboardKey.keyP): () => _print(),
       },
       child: Focus(
         autofocus: true,
@@ -118,15 +151,27 @@ class _SaleCompleteScreenState extends ConsumerState<SaleCompleteScreen> {
                         ),
                       const SizedBox(height: 24),
                       if (_receiptDone != null)
-                        Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_receiptDone!, textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.primary))),
-                      if (settings.receiptPrompt || _receiptDone == null) ...[
-                        Row(children: [
-                          Expanded(child: OutlinedButton.icon(onPressed: settings.printerType == PrinterType.none ? null : _print, icon: const Icon(Icons.print_outlined), label: const Text('Print'))),
-                          const SizedBox(width: 10),
-                          Expanded(child: OutlinedButton.icon(onPressed: () => _email(), icon: const Icon(Icons.email_outlined), label: const Text('Email'))),
-                        ]),
-                        const SizedBox(height: 10),
-                      ],
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text(
+                            _receiptDone!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: _printedOk ? theme.colorScheme.primary : theme.colorScheme.error),
+                          ),
+                        ),
+                      // Print stays available for reprints even after auto-print.
+                      Row(children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: settings.printerType == PrinterType.none ? null : () => _print(),
+                            icon: const Icon(Icons.print_outlined),
+                            label: Text(_printedOk ? 'Reprint' : 'Print'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(child: OutlinedButton.icon(onPressed: () => _email(), icon: const Icon(Icons.email_outlined), label: const Text('Email'))),
+                      ]),
+                      const SizedBox(height: 10),
                       if (settings.qrAfterOrder && cameraScanSupported) ...[
                         OutlinedButton.icon(onPressed: _scanQr, icon: const Icon(Icons.qr_code_scanner), label: const Text('Scan customer QR')),
                         const SizedBox(height: 10),

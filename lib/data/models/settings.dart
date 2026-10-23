@@ -45,6 +45,7 @@ class PosSettings {
     this.tableTimers = true,
     this.receiptPrompt = true,
     this.receiptDefault = ReceiptDefault.ask,
+    this.autoPrintReceipts = true,
     this.pricesIncludeTax = true,
     this.vatEnabled = true,
     this.vatRate = 0.2,
@@ -92,6 +93,9 @@ class PosSettings {
   final bool tableTimers;
   final bool receiptPrompt;
   final ReceiptDefault receiptDefault;
+
+  /// After a sale completes, print the receipt without waiting for the Print button.
+  final bool autoPrintReceipts;
   final bool pricesIncludeTax;
 
   /// Till default for new sales. Off = 0% VAT. On with [vatRate] applies that rate to every line.
@@ -151,6 +155,7 @@ class PosSettings {
     bool? tableTimers,
     bool? receiptPrompt,
     ReceiptDefault? receiptDefault,
+    bool? autoPrintReceipts,
     bool? pricesIncludeTax,
     bool? vatEnabled,
     double? vatRate,
@@ -196,6 +201,7 @@ class PosSettings {
         tableTimers: tableTimers ?? this.tableTimers,
         receiptPrompt: receiptPrompt ?? this.receiptPrompt,
         receiptDefault: receiptDefault ?? this.receiptDefault,
+        autoPrintReceipts: autoPrintReceipts ?? this.autoPrintReceipts,
         pricesIncludeTax: pricesIncludeTax ?? this.pricesIncludeTax,
         vatEnabled: vatEnabled ?? this.vatEnabled,
         vatRate: clearVatRate ? null : (vatRate ?? this.vatRate),
@@ -241,6 +247,7 @@ class PosSettings {
         'tableTimers': tableTimers,
         'receiptPrompt': receiptPrompt,
         'receiptDefault': receiptDefault.name,
+        'autoPrintReceipts': autoPrintReceipts,
         'pricesIncludeTax': pricesIncludeTax,
         'vatEnabled': vatEnabled,
         'vatRate': vatRate,
@@ -291,6 +298,7 @@ class PosSettings {
       tableTimers: b('tableTimers', d.tableTimers),
       receiptPrompt: b('receiptPrompt', d.receiptPrompt),
       receiptDefault: ReceiptDefault.values.firstWhere((v) => v.name == j['receiptDefault'], orElse: () => d.receiptDefault),
+      autoPrintReceipts: b('autoPrintReceipts', d.autoPrintReceipts),
       pricesIncludeTax: b('pricesIncludeTax', d.pricesIncludeTax),
       vatEnabled: b('vatEnabled', d.vatEnabled),
       vatRate: j['vatRate'] is num ? (j['vatRate'] as num).toDouble() : d.vatRate,

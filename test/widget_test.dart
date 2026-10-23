@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zaam_epos/core/utils/money.dart';
 import 'package:zaam_epos/data/models/cart.dart';
 import 'package:zaam_epos/data/models/catalog.dart';
+import 'package:zaam_epos/data/models/settings.dart';
 
 Product _product(String id, int pence, {double tax = 0.2}) => Product(
       variantId: id,
@@ -74,6 +75,17 @@ void main() {
     expect(t.cartDiscountPence, 400);
     expect(t.totalPence, 3600);
     expect(t.lines.fold<int>(0, (s, l) => s + l.discountPence), 400);
+  });
+
+  test('auto-print receipts defaults on and survives JSON round-trip', () {
+    const fresh = PosSettings();
+    expect(fresh.autoPrintReceipts, isTrue);
+    final restored = PosSettings.fromJson({});
+    expect(restored.autoPrintReceipts, isTrue);
+    final off = fresh.copyWith(autoPrintReceipts: false);
+    expect(PosSettings.fromJson(off.toJson()).autoPrintReceipts, isFalse);
+    // Legacy saved settings without the key keep the default (on).
+    expect(PosSettings.fromJson({'receiptPrompt': true}).autoPrintReceipts, isTrue);
   });
 
 }

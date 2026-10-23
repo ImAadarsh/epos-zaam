@@ -151,8 +151,9 @@ class SettingsScreen extends ConsumerWidget {
               ]),
               header('Receipts'),
               card([
+                toggle('Auto-print receipts', s.autoPrintReceipts, (v) => set((x) => x.copyWith(autoPrintReceipts: v))),
                 toggle('Prompt for email / print receipt', s.receiptPrompt, (v) => set((x) => x.copyWith(receiptPrompt: v))),
-                if (!s.receiptPrompt)
+                if (!s.receiptPrompt && !s.autoPrintReceipts)
                   ListTile(
                     title: const Text('When not prompting'),
                     subtitle: Text(switch (s.receiptDefault) { ReceiptDefault.print => 'Always print', ReceiptDefault.email => 'Email if customer has an email', _ => 'No receipt' }),
