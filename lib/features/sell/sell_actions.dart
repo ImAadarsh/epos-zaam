@@ -15,6 +15,7 @@ import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import 'cart_controller.dart';
 import 'widgets/discount_dialog.dart';
+import 'widgets/product_details_sheet.dart';
 import 'widgets/product_options_dialog.dart';
 
 enum _PriceChangeScope { thisSaleOnly, permanent }
@@ -124,12 +125,87 @@ Future<void> editCartLine(BuildContext context, WidgetRef ref, CartLine line) as
   );
 }
 
-/// Opens the "New quantity" keypad and applies the result via [CartController.setQuantity].
+CartLine? _latestLineForProduct(Cart cart, Product product) {
+  // Prefer exact variant; otherwise any line for the same catalogue item (grid tiles
+  // collapse variants, so DETAILS should open the line already in the basket).
+  CartLine? byVariant;
+  CartLine? byItem;
+  for (final l in cart.lines) {
+    if (l.product.variantId == product.variantId) byVariant = l;
+    if (l.product.catalogItemId == product.catalogItemId) byItem = l;
+  }
+  return byVariant ?? byItem;
+}
+
+/// Grid DETAILS → line-item actions sheet. Adds qty 1 first when the product is not
+/// already in the basket (same prompts as a normal add). Does not bump qty when a
+/// matching line already exists.
+Future<void> openProductLineActions(BuildContext context, WidgetRef ref, Product product) async {
+  var line = _latestLineForProduct(ref.read(cartProvider), product);
+  if (line == null) {
+    await addProductToCart(context, ref, product);
+    if (!context.mounted) return;
+    line = _latestLineForProduct(ref.read(cartProvider), product);
+    if (line == null) return; // cancelled options / blocked by stock / unavailable
+  }
+  await editCartLine(context, ref, line);
+}
+
+/// Opens the "New quantity" keypad and applies the result via [CartController.setQuantity] (basket only).
 Future<void> editLineQuantity(BuildContext context, WidgetRef ref, CartLine line) async {
-  final q = await promptQuantity(context, title: 'New quantity', initial: line.quantity, confirmLabel: 'Set quantity');
+  final q = await promptQuantity(
+    context,
+    title: 'Basket quantity',
+    initial: line.quantity,
+    confirmLabel: 'Set quantity',
+    message: 'Changes how many of this item are in this sale — not warehouse stock.',
+  );
   if (q == null || !context.mounted) return;
   final error = ref.read(cartProvider.notifier).setQuantity(line.id, q);
   if (error != null) showMessage(context, error, error: true);
+}
+
+/// Opens a keypad to permanently set catalogue / warehouse stock for the product (DB).
+Future<void> editProductStock(BuildContext context, WidgetRef ref, CartLine line) async {
+  if (!await requirePermission(context, ref, Perm.editCatalogStock)) return;
+  if (!context.mounted) return;
+  if (!ref.read(onlineProvider)) {
+    showMessage(context, 'Changing stock on hand needs an online connection.', error: true);
+    return;
+  }
+
+  final live = ref.read(catalogProvider).products[line.product.variantId] ?? line.product;
+  final current = live.stock ?? 0;
+  final q = await promptQuantity(
+    context,
+    title: 'Stock on hand',
+    initial: current,
+    confirmLabel: 'Save stock',
+    message: 'Updates the product quantity in the catalogue (warehouse), not this sale’s basket quantity.',
+  );
+  if (q == null || !context.mounted) return;
+
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const PopScope(
+      canPop: false,
+      child: Center(child: Card(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))),
+    ),
+  );
+
+  try {
+    final updated = await ref.read(catalogProvider.notifier).setPermanentStock(line.product.variantId, q);
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // dismiss loader
+    ref.read(cartProvider.notifier).applyCatalogProduct(updated, clearPriceOverride: false);
+    showMessage(context, 'Stock on hand saved as $q.');
+  } catch (e) {
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+      showMessage(context, 'Could not save stock: ${errorMessage(e)}. Catalogue was left unchanged.', error: true);
+    }
+  }
 }
 
 class _LineEditor extends ConsumerWidget {
@@ -144,6 +220,16 @@ class _LineEditor extends ConsumerWidget {
     final ctrl = ref.read(cartProvider.notifier);
     final theme = Theme.of(context);
     final settings = ref.read(settingsProvider);
+    final live = ref.watch(catalogProvider).products[line.product.variantId] ?? line.product;
+    final stock = live.stock;
+    final stockLabel = stock == null ? 'Not tracked' : '$stock';
+    final stockColor = stock == null
+        ? theme.colorScheme.onSurfaceVariant
+        : stock <= 0
+            ? theme.colorScheme.error
+            : stock <= 3
+                ? theme.colorScheme.tertiary
+                : theme.colorScheme.onSurfaceVariant;
 
     return SafeArea(
       child: Padding(
@@ -154,21 +240,39 @@ class _LineEditor extends ConsumerWidget {
           children: [
             Text(line.product.displayName, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
             if (line.modifiers.isNotEmpty) Text(line.modifiers.map((m) => m.name).join(', ')),
+            const SizedBox(height: 8),
+            Semantics(
+              label: 'Stock on hand $stockLabel',
+              child: Text(
+                'Stock on hand: $stockLabel',
+                style: theme.textTheme.bodyMedium?.copyWith(color: stockColor, fontWeight: FontWeight.w600),
+              ),
+            ),
             const SizedBox(height: 16),
             Row(
               children: [
-                const Text('Quantity'),
+                Text('Basket quantity', style: theme.textTheme.titleSmall),
                 const Spacer(),
-                IconButton.filledTonal(iconSize: 28, onPressed: () => ctrl.increment(line.id, -1), icon: const Icon(Icons.remove)),
+                IconButton.filledTonal(
+                  tooltip: 'Decrease basket quantity',
+                  iconSize: 28,
+                  onPressed: () => ctrl.increment(line.id, -1),
+                  icon: const Icon(Icons.remove),
+                ),
                 InkWell(
                   borderRadius: BorderRadius.circular(8),
                   onTap: () => editLineQuantity(context, ref, line),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: SizedBox(width: 48, child: Text('${line.quantity}', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall)),
+                  child: Semantics(
+                    button: true,
+                    label: 'Basket quantity ${line.quantity}. Tap to type a new amount.',
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: SizedBox(width: 48, child: Text('${line.quantity}', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall)),
+                    ),
                   ),
                 ),
                 IconButton.filledTonal(
+                  tooltip: 'Increase basket quantity',
                   iconSize: 28,
                   onPressed: () {
                     final error = ctrl.increment(line.id, 1);
@@ -205,7 +309,7 @@ class _LineEditor extends ConsumerWidget {
                 OutlinedButton.icon(
                   icon: const Icon(Icons.pin_outlined),
                   label: const Text('Change quantity'),
-                  onPressed: () => editLineQuantity(context, ref, line),
+                  onPressed: () => editProductStock(context, ref, line),
                 ),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.edit_outlined),
@@ -219,6 +323,11 @@ class _LineEditor extends ConsumerWidget {
                     final n = await promptText(context, title: 'Item note', initial: line.note, allowEmpty: true);
                     if (n != null) ctrl.updateLine(line.copyWith(note: n));
                   },
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.info_outline),
+                  label: const Text('Details'),
+                  onPressed: () => showProductDetails(context, ref, live),
                 ),
               ],
             ),

@@ -54,6 +54,7 @@ class Register {
     this.warehouseId,
     this.warehouseName,
     this.warehouseAddress,
+    this.priceListId,
     this.receiptPrefix,
     this.settings = const {},
   });
@@ -66,6 +67,9 @@ class Register {
 
   /// Address of the stock location; printed on this register's receipts.
   final String? warehouseAddress;
+
+  /// Optional retail price list bound to this register (falls back to org default).
+  final String? priceListId;
   final String? receiptPrefix;
   final Map<String, dynamic> settings;
 
@@ -76,6 +80,7 @@ class Register {
         warehouseId: j['warehouseId']?.toString(),
         warehouseName: j['warehouseName'] as String?,
         warehouseAddress: j['warehouseAddress'] as String?,
+        priceListId: j['priceListId']?.toString(),
         receiptPrefix: j['receiptPrefix'] as String?,
         settings: j['settings'] is Map ? Map<String, dynamic>.from(j['settings'] as Map) : const {},
       );
@@ -87,6 +92,7 @@ class Register {
         'warehouseId': warehouseId,
         'warehouseName': warehouseName,
         'warehouseAddress': warehouseAddress,
+        'priceListId': priceListId,
         'receiptPrefix': receiptPrefix,
         'settings': settings,
       };

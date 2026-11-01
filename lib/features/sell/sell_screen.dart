@@ -27,6 +27,7 @@ import 'payment_screen.dart';
 import 'sell_actions.dart';
 import 'widgets/cart_panel.dart';
 import 'widgets/category_bar.dart';
+import 'widgets/product_details_sheet.dart';
 import 'widgets/product_grid.dart';
 
 class SellScreen extends ConsumerStatefulWidget {
@@ -339,6 +340,8 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                       variantCounts: _query.isEmpty ? variantCounts : const {},
                       minPrices: minPrices,
                       onTap: (p) => addProductToCart(context, ref, p),
+                      onLongPress: (p) => showProductDetails(context, ref, p),
+                      onDetails: (p) => openProductLineActions(context, ref, p),
                     ),
         ),
       ],

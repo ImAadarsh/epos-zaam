@@ -349,6 +349,105 @@ class CatalogController extends Notifier<CatalogState> {
     return updated;
   }
 
+  /// Updates the local cache after a permanent catalogue stock change (also refreshes grid badges).
+  Future<Product?> applyLocalStock(String variantId, int stock) async {
+    final p = state.products[variantId];
+    if (p == null) return null;
+    final updated = p.copyWith(stock: stock, updatedAt: DateTime.now().toIso8601String());
+    state = state.copyWith(products: {...state.products, variantId: updated});
+    await _db.put(LocalDb.products, variantId, updated.toJson());
+    return updated;
+  }
+
+  /// Permanently sets available stock via `PATCH /api/pos/products/:variantId/stock`, then updates the local cache.
+  Future<Product> setPermanentStock(String variantId, int quantity) async {
+    final session = ref.read(sessionProvider);
+    final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).patch(
+          '/api/pos/products/$variantId/stock',
+          data: {
+            'quantity': quantity,
+            'registerId': session.registerId,
+          },
+        ) as Map);
+    final serverQty = (res['quantity'] as num?)?.toInt() ?? quantity;
+    final updated = await applyLocalStock(variantId, serverQty);
+    if (updated == null) throw ApiException('Product left the local catalogue');
+    return updated;
+  }
+
+  /// Creates a catalogue product via `POST /api/pos/products` and upserts it into the local Sell grid.
+  /// Payload mirrors ERP `/api/catalog/items` create fields that POS auth supports.
+  Future<Product> createProduct({
+    required String name,
+    required int sellPricePence,
+    required int quantity,
+    String? sku,
+    String? barcode,
+    String? category,
+    String? subCategory,
+    String? brand,
+    String? packSize,
+    int? costPricePence,
+    String? currency,
+    String? taxCodeId,
+    String? uom,
+    String status = 'active',
+    String? warehouseId,
+    String? description,
+    String? remarks,
+    num? reorderLevel,
+    num? reorderQuantity,
+    String? binCode,
+    String? lotNumber,
+    String? expiryDate,
+    String? supplierName,
+    String? supplierSku,
+    int? leadTimeDays,
+    Map<String, dynamic>? attributes,
+  }) async {
+    final session = ref.read(sessionProvider);
+    final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).post(
+          '/api/pos/products',
+          data: {
+            'name': name,
+            'sellPrice': fromPence(sellPricePence),
+            'quantity': quantity,
+            'sku': sku,
+            'barcode': barcode,
+            'category': category,
+            'subCategory': subCategory,
+            'brand': brand,
+            'packSize': packSize,
+            if (costPricePence != null) 'costPrice': fromPence(costPricePence),
+            'currency': currency,
+            'taxCodeId': taxCodeId,
+            'uom': uom,
+            'status': status,
+            'warehouseId': warehouseId,
+            'registerId': session.registerId,
+            'description': description,
+            'remarks': remarks,
+            'reorderLevel': reorderLevel,
+            'reorderQuantity': reorderQuantity,
+            'binCode': binCode,
+            'lotNumber': lotNumber,
+            'expiryDate': expiryDate,
+            'supplierName': supplierName,
+            'supplierSku': supplierSku,
+            'leadTimeDays': leadTimeDays,
+            if (attributes != null && attributes.isNotEmpty) 'attributes': attributes,
+          },
+        ) as Map);
+    final productJson = Map<String, dynamic>.from(res['product'] as Map);
+    final product = Product.fromApi(productJson);
+    state = state.copyWith(products: {...state.products, product.variantId: product}, loaded: true);
+    await _db.put(LocalDb.products, product.variantId, product.toJson());
+    // Pull a delta so price-list / stock badges stay aligned with the server.
+    await sync(full: false);
+    await syncStock();
+    return state.products[product.variantId] ?? product;
+  }
+
   Future<void> setModifierAvailability(String modifierId, bool available) async {
     final groups = state.modifierGroups
         .map((g) => g.copyWith(modifiers: g.modifiers.map((m) => m.id == modifierId ? m.copyWith(available: available) : m).toList()))

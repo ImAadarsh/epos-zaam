@@ -8,12 +8,22 @@ import '../../../data/repositories/settings_repository.dart';
 
 /// One tile per catalogue item; items with several variants open the options dialog.
 class ProductGrid extends ConsumerWidget {
-  const ProductGrid({super.key, required this.items, required this.onTap, this.variantCounts = const {}, this.minPrices = const {}});
+  const ProductGrid({
+    super.key,
+    required this.items,
+    required this.onTap,
+    this.onLongPress,
+    this.onDetails,
+    this.variantCounts = const {},
+    this.minPrices = const {},
+  });
 
   final List<Product> items;
   final Map<String, int> variantCounts;
   final Map<String, int> minPrices;
   final ValueChanged<Product> onTap;
+  final ValueChanged<Product>? onLongPress;
+  final ValueChanged<Product>? onDetails;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -41,6 +51,8 @@ class ProductGrid extends ConsumerWidget {
             variants: count,
             fromPrice: count > 1 ? minPrices[p.catalogItemId] : null,
             onTap: () => onTap(p),
+            onLongPress: onLongPress == null ? null : () => onLongPress!(p),
+            onDetails: onDetails == null ? null : () => onDetails!(p),
           );
         },
       );
@@ -49,10 +61,21 @@ class ProductGrid extends ConsumerWidget {
 }
 
 class ProductTile extends StatelessWidget {
-  const ProductTile({super.key, required this.product, required this.onTap, this.showImage = true, this.variants = 1, this.fromPrice});
+  const ProductTile({
+    super.key,
+    required this.product,
+    required this.onTap,
+    this.onLongPress,
+    this.onDetails,
+    this.showImage = true,
+    this.variants = 1,
+    this.fromPrice,
+  });
 
   final Product product;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final VoidCallback? onDetails;
   final bool showImage;
   final int variants;
   final int? fromPrice;
@@ -84,6 +107,7 @@ class ProductTile extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
+          onLongPress: onLongPress,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -123,6 +147,29 @@ class ProductTile extends StatelessWidget {
                         children: [
                           Expanded(child: Text(price, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w700))),
                           if (!showImage && (out || low)) Icon(Icons.inventory_2_outlined, size: 16, color: out ? ZaamColors.red : ZaamColors.amber),
+                          if (onDetails != null) ...[
+                            const SizedBox(width: 4),
+                            // Nested InkWell so DETAILS does not fire the card's add-to-basket tap.
+                            Material(
+                              type: MaterialType.transparency,
+                              child: InkWell(
+                                onTap: onDetails,
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                  child: Text(
+                                    'DETAILS',
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: ZaamColors.info,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.3,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ],

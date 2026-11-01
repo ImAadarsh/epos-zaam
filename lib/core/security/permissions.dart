@@ -6,6 +6,8 @@ enum Perm {
   discountOverLimit,
   priceOverride,
   editCatalogPrice,
+  editCatalogStock,
+  createCatalogProduct,
   cashMovement,
   noSale,
   closeRegister,
@@ -24,6 +26,8 @@ extension PermX on Perm {
         Perm.discountOverLimit => 'Discount above cashier limit',
         Perm.priceOverride => 'Change an item price',
         Perm.editCatalogPrice => 'Permanently change a product price',
+        Perm.editCatalogStock => 'Change product stock quantity',
+        Perm.createCatalogProduct => 'Add a product to inventory',
         Perm.cashMovement => 'Pay cash in or out',
         Perm.noSale => 'Open the cash drawer (no sale)',
         Perm.closeRegister => 'Close the register',
@@ -39,7 +43,15 @@ extension PermX on Perm {
         Perm.manageAvailability || Perm.noSale => PosRole.supervisor,
         Perm.refund || Perm.voidSale || Perm.discountOverLimit || Perm.priceOverride || Perm.cashMovement => PosRole.supervisor,
         Perm.closeRegister => PosRole.supervisor,
-        Perm.editCatalogPrice || Perm.settings || Perm.createVatRate || Perm.staffPins || Perm.changeRegister || Perm.resetApp => PosRole.manager,
+        Perm.editCatalogPrice ||
+            Perm.editCatalogStock ||
+            Perm.createCatalogProduct ||
+            Perm.settings ||
+            Perm.createVatRate ||
+            Perm.staffPins ||
+            Perm.changeRegister ||
+            Perm.resetApp =>
+          PosRole.manager,
       };
 }
 

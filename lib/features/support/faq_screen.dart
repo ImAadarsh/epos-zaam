@@ -22,6 +22,8 @@ class FaqScreen extends StatelessWidget {
         'With any standalone terminal: charge the amount on the terminal and tap Approved. With SumUp Solo: add your SumUp API key, merchant code and reader ID in Settings → Payment and the amount is sent to the reader automatically.'),
     ('Where do products and prices come from?',
         'From Zaam ERP (catalogue, variants, barcodes, price lists and promotions). The till downloads changes every few minutes and stock levels every minute.'),
+    ('How do I add a new product on the till?',
+        'Sidebar Add Product or Options → Add product (manager PIN). Same create fields as ERP Catalog Items (identity, pricing, stock, supplier, attributes). Defaults such as warehouse, VAT and price list come from this register — change them with the chips at the top. Images and multi-variant matrices stay in ERP. After saving, the product appears on Sell.'),
   ];
 
   @override
