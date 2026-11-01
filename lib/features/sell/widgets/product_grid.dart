@@ -39,7 +39,8 @@ class ProductGrid extends ConsumerWidget {
           crossAxisCount: cols,
           mainAxisSpacing: 10,
           crossAxisSpacing: 10,
-          childAspectRatio: settings.showProductImages ? 0.82 : 1.25,
+          // Extra vertical room so barcode/SKU under the name stays visible.
+          childAspectRatio: settings.showProductImages ? 0.72 : 1.05,
         ),
         itemCount: items.length,
         itemBuilder: (_, i) {
@@ -81,6 +82,19 @@ class ProductTile extends StatelessWidget {
   final int? fromPrice;
 
   static const _palette = [Color(0xFFD4A017), Color(0xFF34495E), Color(0xFF8E6C8A), Color(0xFF2E8B57), Color(0xFFB5651D), Color(0xFF4A6FA5), Color(0xFF7B8D42)];
+
+  /// Prefer barcode; fall back to SKU so staff can still verify the code on the tile.
+  String? get _codeLabel {
+    final barcode = product.barcodes.map((b) => b.trim()).firstWhere((b) => b.isNotEmpty, orElse: () => '');
+    if (barcode.isNotEmpty) return barcode;
+    final sku = product.sku.trim();
+    return sku.isEmpty ? null : sku;
+  }
+
+  bool get _codeIsBarcode {
+    final barcode = product.barcodes.map((b) => b.trim()).firstWhere((b) => b.isNotEmpty, orElse: () => '');
+    return barcode.isNotEmpty;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -143,6 +157,23 @@ class ProductTile extends StatelessWidget {
                       Expanded(
                         child: Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, height: 1.2)),
                       ),
+                      if (_codeLabel != null) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          _codeIsBarcode ? _codeLabel! : 'SKU ${_codeLabel!}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                            letterSpacing: 0.15,
+                            height: 1.1,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 3),
                       Row(
                         children: [
                           Expanded(child: Text(price, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w700))),

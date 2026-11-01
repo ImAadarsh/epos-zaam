@@ -237,7 +237,11 @@ class _SellScreenState extends ConsumerState<SellScreen> {
 
     final catalog = ref.watch(catalogProvider);
     final all = catalog.sellable;
-    final filtered = all.where((p) => (_category == null || p.category == _category) && _matches(p, _query)).toList();
+    final filtered = all.where((p) {
+      if (!_matches(p, _query)) return false;
+      if (_category == null) return true;
+      return catalog.categoryLabelOf(p) == _category;
+    }).toList();
 
     // One tile per catalogue item unless searching (then show matching variants directly).
     final variantCounts = <String, int>{};

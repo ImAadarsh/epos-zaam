@@ -36,12 +36,30 @@ class CatalogState {
 
   List<Product> get sellable => products.values.where((p) => p.active).toList();
 
+  /// Stable category labels for the sell screen. Blank/whitespace → "Uncategorised"
+  /// so those products remain filterable instead of disappearing from the chip bar.
+  static const uncategorisedLabel = 'Uncategorised';
+
+  String categoryLabelOf(Product p) {
+    final raw = p.category?.trim() ?? '';
+    return raw.isEmpty ? uncategorisedLabel : raw;
+  }
+
   List<String> get categories {
     final set = <String>{};
+    var hasBlank = false;
     for (final p in products.values) {
-      if (p.active && p.category != null && p.category!.trim().isNotEmpty) set.add(p.category!.trim());
+      if (!p.active) continue;
+      final raw = p.category?.trim() ?? '';
+      if (raw.isEmpty) {
+        hasBlank = true;
+      } else {
+        set.add(raw);
+      }
     }
-    return set.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final list = set.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    if (hasBlank) list.add(uncategorisedLabel);
+    return list;
   }
 
   Product? byCode(String code) {
