@@ -474,6 +474,89 @@ class CatalogController extends Notifier<CatalogState> {
     await _db.replaceAll(LocalDb.modifierGroups, {for (final g in groups) g.id: g.toJson()});
   }
 
+  static const defaultUoms = ['each', 'pack', 'box', 'case', 'kg', 'g', 'litre', 'ml', 'SET', 'PCS'];
+
+  /// Distinct free-text classification values already on downloaded products (offline-safe).
+  Map<String, List<String>> classificationsFromProducts() {
+    final out = <String, Set<String>>{
+      'category': {},
+      'sub_category': {},
+      'brand': {},
+      'uom': {},
+      'pack_size': {},
+    };
+    for (final p in state.products.values) {
+      final cat = p.category?.trim();
+      if (cat != null && cat.isNotEmpty && cat != CatalogState.uncategorisedLabel) out['category']!.add(cat);
+      final sub = p.subCategory?.trim();
+      if (sub != null && sub.isNotEmpty) out['sub_category']!.add(sub);
+      final brand = p.brand?.trim();
+      if (brand != null && brand.isNotEmpty) out['brand']!.add(brand);
+    }
+    return {
+      for (final e in out.entries) e.key: (e.value.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()))),
+    };
+  }
+
+  /// Org-scoped classification master data for Add Product dropdowns (`GET /api/pos/classifications`).
+  /// Merges local product values + default UOMs so empty master tables never strand a cashier.
+  Future<({Map<String, List<String>> lists, String? hint, bool fromProducts})> listClassifications({
+    String? type,
+    String? parentId,
+  }) async {
+    final out = <String, List<String>>{
+      'category': [],
+      'sub_category': [],
+      'brand': [],
+      'uom': [],
+      'pack_size': [],
+    };
+    String? hint;
+    var fromProducts = false;
+    try {
+      final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get(
+            '/api/pos/classifications',
+            query: {
+              'type': ?type,
+              'parentId': ?parentId,
+            },
+          ) as Map);
+      final rows = (res['data'] as List? ?? const []);
+      final meta = res['meta'] is Map ? Map<String, dynamic>.from(res['meta'] as Map) : const <String, dynamic>{};
+      hint = meta['hint']?.toString();
+      fromProducts = meta['fromProducts'] == true;
+      for (final raw in rows) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final t = '${row['type'] ?? ''}';
+        final name = '${row['name'] ?? ''}'.trim();
+        if (name.isEmpty || !out.containsKey(t)) continue;
+        if (!out[t]!.contains(name)) out[t]!.add(name);
+      }
+    } catch (_) {
+      hint =
+          'Could not load classifications online. Using products already on this till. In ERP: Catalog → Classifications → Import from products.';
+      fromProducts = true;
+    }
+
+    final local = classificationsFromProducts();
+    for (final key in out.keys) {
+      for (final name in local[key] ?? const <String>[]) {
+        if (!out[key]!.contains(name)) out[key]!.add(name);
+      }
+    }
+    for (final u in defaultUoms) {
+      if (!out['uom']!.contains(u)) out['uom']!.add(u);
+    }
+    for (final list in out.values) {
+      list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    }
+    if (hint == null && out['category']!.isEmpty && out['brand']!.isEmpty) {
+      hint =
+          'No categories yet. In ERP open Catalog → Classifications (Manage Classifications), add values or Import from products, then tap Refresh on Add Product.';
+    }
+    return (lists: out, hint: hint, fromProducts: fromProducts);
+  }
+
   /// Server-side lookup for codes not in the local cache (e.g. a barcode added moments ago).
   Future<Product?> lookupRemote(String code) async {
     try {

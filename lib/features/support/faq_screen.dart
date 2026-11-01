@@ -23,7 +23,9 @@ class FaqScreen extends StatelessWidget {
     ('Where do products and prices come from?',
         'From Zaam ERP (catalogue, variants, barcodes, price lists and promotions). The till downloads changes every few minutes and stock levels every minute.'),
     ('How do I add a new product on the till?',
-        'Sidebar Add Product or Options → Add product (manager PIN). Same create fields as ERP Catalog Items (identity, pricing, stock, supplier, attributes). Defaults such as warehouse, VAT and price list come from this register — change them with the chips at the top. Images and multi-variant matrices stay in ERP. After saving, the product appears on Sell.'),
+        'Sidebar Add Product or Options → Add product (manager PIN). Name, sell price and starting stock are enough for most items. Category, brand and sold-as are pick lists from ERP Manage Classifications (Catalog → Classifications) — tap Refresh if the lists look empty. Defaults such as warehouse and VAT come from this register (chips at the top). Images and multi-variant matrices stay in ERP.'),
+    ('Why are categories empty on Add Product?',
+        'Ask an admin in ERP → Catalog → Classifications (Manage Classifications) to add values or tap Import from products, then reopen Add Product and tap Refresh. Until then the till may show categories already used on products downloaded to this device.'),
   ];
 
   @override

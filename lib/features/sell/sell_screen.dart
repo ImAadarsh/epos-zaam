@@ -19,6 +19,7 @@ import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/sales_repository.dart';
 import '../../data/repositories/session.dart';
 import '../../data/repositories/shift_repository.dart';
+import '../catalog/add_product_screen.dart';
 import '../register/open_register_card.dart';
 import '../sales/refund_screen.dart';
 import '../shell/app_shell.dart';
@@ -95,7 +96,13 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     }
 
     SystemSound.play(SystemSoundType.alert);
-    showMessage(context, 'No product found for "$code"', error: true);
+    final add = await confirm(
+      context,
+      title: 'No product for "$code"',
+      message: 'Nothing matches this barcode or code on this till. Add it now with a manager PIN?',
+      confirmLabel: 'Add product',
+    );
+    if (add && mounted) await openAddProductScreen(context, ref, initialBarcode: code);
   }
 
   /// Exact barcode/SKU match. If several local twins share the code, prefer
