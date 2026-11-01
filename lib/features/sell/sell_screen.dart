@@ -77,29 +77,61 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       await _customerFromCode(code.substring(5).trim());
       return;
     }
-    final catalog = ref.read(catalogProvider);
-    var product = catalog.byCode(code);
+
+    final product = await _resolveProductForCode(code);
+    if (!mounted) return;
     if (product != null) {
       await addProductToCart(context, ref, product, fromScan: true);
       return;
     }
+
     final sale = ref.read(localSalesProvider.notifier).find(code);
     if (sale != null) {
       final open = await confirm(context, title: 'Receipt ${sale.receiptNumber}', message: 'This is a receipt barcode. Start a refund for it?', confirmLabel: 'Refund');
       if (open && mounted) Navigator.of(context).push(MaterialPageRoute(builder: (_) => RefundScreen(initialCode: code)));
       return;
     }
-    try {
-      product = await ref.read(catalogProvider.notifier).lookupRemote(code);
-    } catch (_) {
-      product = null;
+
+    SystemSound.play(SystemSoundType.alert);
+    showMessage(context, 'No product found for "$code"', error: true);
+  }
+
+  /// Exact barcode/SKU match. If several local twins share the code, prefer
+  /// in-stock/active; if still ambiguous, ask the cashier (never silent wrong add).
+  Future<Product?> _resolveProductForCode(String code) async {
+    final catalog = ref.read(catalogProvider);
+    final local = catalog.allByCode(code);
+    if (local.length == 1) return local.first;
+    if (local.length > 1) {
+      final best = preferBarcodeMatch(local);
+      final contenders = local.where((p) {
+        final stockOk = p.stock == null || p.stock! > 0;
+        final bestStockOk = best.stock == null || best.stock! > 0;
+        return stockOk == bestStockOk && p.available == best.available;
+      }).toList();
+      if (contenders.length == 1) return contenders.first;
+      if (!mounted) return null;
+      final picked = await pickOption<Product>(
+        context,
+        title: 'Multiple products for "$code"',
+        options: [
+          for (final p in [...local]..sort(compareBarcodeCandidates))
+            (
+              p,
+              '${p.displayName} · ${formatPence(p.effectivePricePence)}'
+              '${p.stock != null ? ' · ${p.stock} in stock' : ''}'
+              '${p.outOfStock ? ' · out of stock' : ''}'
+              ' · ${p.sku}',
+            ),
+        ],
+      );
+      return picked;
     }
-    if (!mounted) return;
-    if (product != null) {
-      await addProductToCart(context, ref, product, fromScan: true);
-    } else {
-      SystemSound.play(SystemSoundType.alert);
-      showMessage(context, 'No product found for "$code"', error: true);
+
+    try {
+      return await ref.read(catalogProvider.notifier).lookupRemote(code);
+    } catch (_) {
+      return null;
     }
   }
 
@@ -150,11 +182,29 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   bool _matches(Product p, String q) {
     if (q.isEmpty) return true;
     final s = q.toLowerCase();
+    // Full numeric barcodes must match exactly — substring contains() let stale
+    // local twins (and unrelated SKUs) appear beside the real product.
+    if (looksLikeBarcode(q)) {
+      return p.sku.toLowerCase() == s || p.barcodes.any((b) => b.toLowerCase() == s);
+    }
     return p.name.toLowerCase().contains(s) ||
         p.sku.toLowerCase().contains(s) ||
         (p.variantName?.toLowerCase().contains(s) ?? false) ||
         (p.brand?.toLowerCase().contains(s) ?? false) ||
-        p.barcodes.any((b) => b.contains(s));
+        p.barcodes.any((b) => b.toLowerCase().contains(s));
+  }
+
+  /// For barcode searches, collapse stale local twins to the single best match.
+  List<Product> _tilesForQuery(List<Product> filtered, String q) {
+    if (!looksLikeBarcode(q)) return filtered;
+    final byCode = <String, List<Product>>{};
+    for (final p in filtered) {
+      final key = p.barcodes.map((b) => b.toLowerCase()).firstWhere((b) => b == q.toLowerCase(), orElse: () => p.sku.toLowerCase());
+      byCode.putIfAbsent(key, () => []).add(p);
+    }
+    return [
+      for (final group in byCode.values) preferBarcodeMatch(group),
+    ];
   }
 
   @override
@@ -198,7 +248,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     }
     final List<Product> tiles;
     if (_query.isNotEmpty) {
-      tiles = filtered;
+      tiles = _tilesForQuery(filtered, _query);
     } else {
       final seen = <String>{};
       tiles = [for (final p in filtered) if (seen.add(p.catalogItemId)) p]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -258,7 +308,8 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                 ),
                 IconButton(
                   tooltip: 'Refresh products',
-                  onPressed: catalog.syncing ? null : () => ref.read(catalogProvider.notifier).sync(),
+                  // Full sync clears hard-deleted ghosts that delta sync never tombstones.
+                  onPressed: catalog.syncing ? null : () => ref.read(catalogProvider.notifier).sync(full: true),
                   icon: catalog.syncing ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh),
                 ),
               ],

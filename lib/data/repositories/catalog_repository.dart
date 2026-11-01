@@ -45,8 +45,24 @@ class CatalogState {
   }
 
   Product? byCode(String code) {
-    final id = codeIndex[code.trim().toLowerCase()];
-    return id == null ? null : products[id];
+    final matches = allByCode(code);
+    if (matches.isEmpty) return null;
+    return preferBarcodeMatch(matches);
+  }
+
+  /// Every active local product that exactly matches [code] as barcode or SKU.
+  /// Used when a hard-deleted re-import left a stale twin in IndexedDB.
+  List<Product> allByCode(String code) {
+    final key = code.trim().toLowerCase();
+    if (key.isEmpty) return const [];
+    final hits = <Product>[];
+    for (final p in products.values) {
+      if (!p.active) continue;
+      if (p.sku.toLowerCase() == key || p.barcodes.any((b) => b.toLowerCase() == key)) {
+        hits.add(p);
+      }
+    }
+    return hits;
   }
 
   List<Product> variantsOf(String catalogItemId) =>
@@ -84,14 +100,71 @@ class CatalogState {
 
   static Map<String, String> _index(Map<String, Product> products) {
     final idx = <String, String>{};
+    final best = <String, Product>{};
     for (final p in products.values) {
-      idx[p.sku.toLowerCase()] = p.variantId;
+      if (!p.active) continue;
+      void claim(String raw) {
+        final key = raw.toLowerCase();
+        final prev = best[key];
+        if (prev == null || compareBarcodeCandidates(p, prev) < 0) {
+          best[key] = p;
+          idx[key] = p.variantId;
+        }
+      }
+
+      claim(p.sku);
       for (final b in p.barcodes) {
-        idx[b.toLowerCase()] = p.variantId;
+        claim(b);
       }
     }
     return idx;
   }
+}
+
+/// True for retail-length numeric barcodes (EAN-8/13, UPC-A, etc.).
+bool looksLikeBarcode(String q) => RegExp(r'^\d{8,14}$').hasMatch(q.trim());
+
+/// Prefer in-stock → available → newer [Product.updatedAt] → higher variant id.
+int compareBarcodeCandidates(Product a, Product b) {
+  int rank(Product p) {
+    final stock = p.stock;
+    final inStock = stock == null || stock > 0;
+    return (inStock ? 4 : 0) + (p.available ? 2 : 0) + (p.active ? 1 : 0);
+  }
+
+  final byRank = rank(b).compareTo(rank(a));
+  if (byRank != 0) return byRank;
+  final aAt = DateTime.tryParse(a.updatedAt ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+  final bAt = DateTime.tryParse(b.updatedAt ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+  final byTime = bAt.compareTo(aAt);
+  if (byTime != 0) return byTime;
+  return b.variantId.compareTo(a.variantId);
+}
+
+Product preferBarcodeMatch(List<Product> matches) {
+  final ranked = [...matches]..sort(compareBarcodeCandidates);
+  return ranked.first;
+}
+
+/// Drop stale local twins that still claim a barcode owned by a better row
+/// (typical after a hard re-import where delta sync never tombstoned the old id).
+Map<String, Product> purgeStaleBarcodeDuplicates(Map<String, Product> products) {
+  final byCode = <String, List<Product>>{};
+  for (final p in products.values) {
+    for (final b in p.barcodes) {
+      byCode.putIfAbsent(b.toLowerCase(), () => []).add(p);
+    }
+  }
+  final remove = <String>{};
+  for (final list in byCode.values) {
+    if (list.length < 2) continue;
+    final ranked = [...list]..sort(compareBarcodeCandidates);
+    for (final loser in ranked.skip(1)) {
+      remove.add(loser.variantId);
+    }
+  }
+  if (remove.isEmpty) return products;
+  return {for (final e in products.entries) if (!remove.contains(e.key)) e.key: e.value};
 }
 
 /// Product/modifier cache with full + incremental sync from `/api/pos/catalog`
@@ -140,10 +213,9 @@ class CatalogController extends Notifier<CatalogState> {
       final incoming = ((res['products'] as List?) ?? []).map((e) => Product.fromApi(Map<String, dynamic>.from(e as Map))).toList();
       final groups = ((res['modifierGroups'] as List?) ?? []).map((e) => ModifierGroup.fromJson(Map<String, dynamic>.from(e as Map))).toList();
 
-      final Map<String, Product> next;
+      var next = <String, Product>{};
       if (since == null) {
         next = {for (final p in incoming) p.variantId: p};
-        await _db.replaceAll(LocalDb.products, {for (final p in next.values) p.variantId: p.toJson()});
       } else {
         next = Map.of(state.products);
         final deleted = <String>[];
@@ -162,6 +234,14 @@ class CatalogController extends Notifier<CatalogState> {
         if (changed.isNotEmpty) await _db.putMany(LocalDb.products, changed);
         if (deleted.isNotEmpty) await _db.deleteMany(LocalDb.products, deleted);
       }
+
+      final beforePurge = next.length;
+      next = purgeStaleBarcodeDuplicates(next);
+      final purged = beforePurge - next.length;
+      if (since == null || purged > 0) {
+        await _db.replaceAll(LocalDb.products, {for (final p in next.values) p.variantId: p.toJson()});
+      }
+
       await _db.replaceAll(LocalDb.modifierGroups, {for (final g in groups) g.id: g.toJson()});
       state = state.copyWith(
         products: next,
@@ -173,7 +253,10 @@ class CatalogController extends Notifier<CatalogState> {
         stockServerTime: since == null ? res['serverTime'] as String? : state.stockServerTime,
       );
       await _saveMeta();
-      AppLog.info('Catalogue sync (${since == null ? 'full' : 'delta'}): ${incoming.length} rows');
+      AppLog.info(
+        'Catalogue sync (${since == null ? 'full' : 'delta'}): ${incoming.length} rows'
+        '${purged > 0 ? ', purged $purged stale barcode twin(s)' : ''}',
+      );
     } catch (e) {
       if (e is ApiException && e.isNetwork) ref.read(onlineProvider.notifier).markOffline();
       state = state.copyWith(syncing: false, error: errorMessage(e));
