@@ -29,7 +29,16 @@ class ProductGrid extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
     if (items.isEmpty) {
-      return const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No products match', textAlign: TextAlign.center)));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(
+            'No products match this search or category.\nClear the search or tap All to see everything.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
+        ),
+      );
     }
     return LayoutBuilder(builder: (context, c) {
       final cols = settings.gridColumns > 0 ? settings.gridColumns : (c.maxWidth / 170).floor().clamp(2, 8);
@@ -181,20 +190,26 @@ class ProductTile extends StatelessWidget {
                           if (onDetails != null) ...[
                             const SizedBox(width: 4),
                             // Nested InkWell so DETAILS does not fire the card's add-to-basket tap.
+                            // Min 44×44 hit target for till touch (WCAG / ux-heuristics).
                             Material(
                               type: MaterialType.transparency,
                               child: InkWell(
                                 onTap: onDetails,
-                                borderRadius: BorderRadius.circular(6),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                  child: Text(
-                                    'DETAILS',
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: ZaamColors.info,
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: 0.3,
-                                      fontSize: 10,
+                                borderRadius: BorderRadius.circular(8),
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                                  child: Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                      child: Text(
+                                        'DETAILS',
+                                        style: theme.textTheme.labelSmall?.copyWith(
+                                          color: ZaamColors.info,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.3,
+                                          fontSize: 11,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),

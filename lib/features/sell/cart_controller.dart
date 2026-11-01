@@ -53,9 +53,11 @@ class CartController extends Notifier<Cart> {
     if (inCart + extra <= stock) return null;
     if (stock <= 0) return '${product.displayName} is out of stock.';
     final left = stock - inCart;
+    // Avoid "N more can be added" — when the line already holds stock it read as if
+    // more units could still be added (UAT F67). Always state the sale max = stock.
     return left <= 0
         ? 'Only $stock of ${product.displayName} in stock, all already in this sale.'
-        : 'Only $stock of ${product.displayName} in stock ($left more can be added).';
+        : 'Only $stock of ${product.displayName} in stock (up to $stock in total).';
   }
 
   /// Adds a product; plain lines of the same variant merge into one.

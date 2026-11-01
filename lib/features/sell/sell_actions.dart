@@ -307,8 +307,8 @@ class _LineEditor extends ConsumerWidget {
                   },
                 ),
                 OutlinedButton.icon(
-                  icon: const Icon(Icons.pin_outlined),
-                  label: const Text('Change quantity'),
+                  icon: const Icon(Icons.inventory_2_outlined),
+                  label: const Text('Change stock'),
                   onPressed: () => editProductStock(context, ref, line),
                 ),
                 OutlinedButton.icon(

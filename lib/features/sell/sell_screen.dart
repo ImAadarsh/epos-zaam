@@ -8,6 +8,7 @@ import '../../core/display/customer_display.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/scanner/camera_scanner.dart';
 import '../../core/scanner/scan_bus.dart';
+import '../../core/sync/connectivity.dart';
 import '../../core/utils/money.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/widgets/dialogs.dart';
@@ -326,18 +327,62 @@ class _SellScreenState extends ConsumerState<SellScreen> {
           selected: _category,
           onSelected: (c) => setState(() => _category = c),
         ),
+        if (catalog.error != null && all.isNotEmpty)
+          Material(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: ListTile(
+              dense: true,
+              leading: Icon(Icons.cloud_off_outlined, color: Theme.of(context).colorScheme.onErrorContainer),
+              title: Text(
+                'Catalogue refresh failed — showing last downloaded products. ${catalog.error}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer, fontSize: 13),
+              ),
+              trailing: TextButton(
+                onPressed: catalog.syncing ? null : () => ref.read(catalogProvider.notifier).sync(full: true),
+                child: const Text('Retry'),
+              ),
+            ),
+          ),
         Expanded(
           child: !catalog.loaded
               ? const Center(child: CircularProgressIndicator())
               : all.isEmpty
                   ? Center(
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        const Text('No products downloaded yet.'),
-                        const SizedBox(height: 8),
-                        if (catalog.error != null) Text(catalog.error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                        const SizedBox(height: 8),
-                        FilledButton.tonal(onPressed: () => ref.read(catalogProvider.notifier).sync(full: true), child: const Text('Download products')),
-                      ]),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.inventory_2_outlined, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          const SizedBox(height: 12),
+                          Text(
+                            ref.watch(onlineProvider)
+                                ? 'No products on this till yet'
+                                : 'You are offline and no products are stored on this device',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            ref.watch(onlineProvider)
+                                ? 'Download the organisation catalogue, or use Options → Add product (manager) to create one.'
+                                : 'Reconnect, then tap Download products. Sales can still use items already on the device.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          ),
+                          if (catalog.error != null) ...[
+                            const SizedBox(height: 12),
+                            Text(catalog.error!, textAlign: TextAlign.center, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                          ],
+                          const SizedBox(height: 16),
+                          FilledButton.tonal(
+                            onPressed: catalog.syncing || !ref.watch(onlineProvider)
+                                ? null
+                                : () => ref.read(catalogProvider.notifier).sync(full: true),
+                            child: Text(catalog.syncing ? 'Downloading…' : 'Download products'),
+                          ),
+                        ]),
+                      ),
                     )
                   : ProductGrid(
                       items: tiles,
