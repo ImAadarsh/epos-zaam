@@ -401,13 +401,18 @@ class CatalogController extends Notifier<CatalogState> {
     required int quantity,
     String? sku,
     String? barcode,
+    String? categoryId,
     String? category,
+    String? subCategoryId,
     String? subCategory,
+    String? brandId,
     String? brand,
+    String? packSizeId,
     String? packSize,
     int? costPricePence,
     String? currency,
     String? taxCodeId,
+    String? uomId,
     String? uom,
     String status = 'active',
     String? warehouseId,
@@ -424,6 +429,13 @@ class CatalogController extends Notifier<CatalogState> {
     Map<String, dynamic>? attributes,
   }) async {
     final session = ref.read(sessionProvider);
+    // Prefer real classification ids; skip synthetic `product:type:Name` fallbacks (API resolves names).
+    String? realId(String? id) {
+      if (id == null || id.isEmpty) return null;
+      if (id.startsWith('product:')) return null;
+      return id;
+    }
+
     final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).post(
           '/api/pos/products',
           data: {
@@ -432,13 +444,18 @@ class CatalogController extends Notifier<CatalogState> {
             'quantity': quantity,
             'sku': sku,
             'barcode': barcode,
+            'categoryId': realId(categoryId),
             'category': category,
+            'subCategoryId': realId(subCategoryId),
             'subCategory': subCategory,
+            'brandId': realId(brandId),
             'brand': brand,
+            'packSizeId': realId(packSizeId),
             'packSize': packSize,
             if (costPricePence != null) 'costPrice': fromPence(costPricePence),
             'currency': currency,
             'taxCodeId': taxCodeId,
+            'uomId': realId(uomId),
             'uom': uom,
             'status': status,
             'warehouseId': warehouseId,
@@ -499,12 +516,13 @@ class CatalogController extends Notifier<CatalogState> {
   }
 
   /// Org-scoped classification master data for Add Product dropdowns (`GET /api/pos/classifications`).
+  /// Each entry is `{id, name}` — pickers save **id**; display uses name.
   /// Merges local product values + default UOMs so empty master tables never strand a cashier.
-  Future<({Map<String, List<String>> lists, String? hint, bool fromProducts})> listClassifications({
+  Future<({Map<String, List<({String id, String name})>> options, String? hint, bool fromProducts})> listClassifications({
     String? type,
     String? parentId,
   }) async {
-    final out = <String, List<String>>{
+    final out = <String, List<({String id, String name})>>{
       'category': [],
       'sub_category': [],
       'brand': [],
@@ -513,6 +531,13 @@ class CatalogController extends Notifier<CatalogState> {
     };
     String? hint;
     var fromProducts = false;
+
+    void addOpt(String t, String id, String name) {
+      if (name.isEmpty || !out.containsKey(t)) return;
+      if (out[t]!.any((o) => o.id == id || o.name.toLowerCase() == name.toLowerCase())) return;
+      out[t]!.add((id: id, name: name));
+    }
+
     try {
       final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get(
             '/api/pos/classifications',
@@ -529,8 +554,9 @@ class CatalogController extends Notifier<CatalogState> {
         final row = Map<String, dynamic>.from(raw as Map);
         final t = '${row['type'] ?? ''}';
         final name = '${row['name'] ?? ''}'.trim();
-        if (name.isEmpty || !out.containsKey(t)) continue;
-        if (!out[t]!.contains(name)) out[t]!.add(name);
+        final id = '${row['id'] ?? ''}'.trim();
+        if (name.isEmpty || id.isEmpty) continue;
+        addOpt(t, id, name);
       }
     } catch (_) {
       hint =
@@ -539,22 +565,22 @@ class CatalogController extends Notifier<CatalogState> {
     }
 
     final local = classificationsFromProducts();
-    for (final key in out.keys) {
-      for (final name in local[key] ?? const <String>[]) {
-        if (!out[key]!.contains(name)) out[key]!.add(name);
+    for (final e in local.entries) {
+      for (final name in e.value) {
+        addOpt(e.key, 'product:${e.key}:$name', name);
       }
     }
     for (final u in defaultUoms) {
-      if (!out['uom']!.contains(u)) out['uom']!.add(u);
+      addOpt('uom', 'product:uom:$u', u);
     }
     for (final list in out.values) {
-      list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     }
     if (hint == null && out['category']!.isEmpty && out['brand']!.isEmpty) {
       hint =
           'No categories yet. In ERP open Catalog → Classifications (Manage Classifications), add values or Import from products, then tap Refresh on Add Product.';
     }
-    return (lists: out, hint: hint, fromProducts: fromProducts);
+    return (options: out, hint: hint, fromProducts: fromProducts);
   }
 
   /// Server-side lookup for codes not in the local cache (e.g. a barcode added moments ago).

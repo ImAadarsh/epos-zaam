@@ -110,13 +110,18 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   String? _classificationsHint;
   bool _classificationsFromProducts = false;
 
-  Map<String, List<String>> _classifications = const {
+  Map<String, List<({String id, String name})>> _classifications = const {
     'category': [],
     'sub_category': [],
     'brand': [],
     'uom': [],
     'pack_size': [],
   };
+  String? _categoryId;
+  String? _subCategoryId;
+  String? _brandId;
+  String? _packSizeId;
+  String? _uomId;
 
   @override
   void initState() {
@@ -151,14 +156,27 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
 
     await _reloadClassifications(silent: true);
 
-    final masterCats = _classifications['category'] ?? const <String>[];
-    _defaultCategory = masterCats.isNotEmpty ? _mostCommonCategory(masterCats) : _mostCommonCategory(catalog.categories);
-    if (_defaultCategory.isNotEmpty) _category.text = _defaultCategory;
+    final masterCats = _classifications['category'] ?? const <({String id, String name})>[];
+    final catNames = masterCats.map((o) => o.name).toList();
+    _defaultCategory = catNames.isNotEmpty ? _mostCommonCategory(catNames) : _mostCommonCategory(catalog.categories);
+    if (_defaultCategory.isNotEmpty) {
+      _category.text = _defaultCategory;
+      final match = masterCats.where((o) => o.name == _defaultCategory).toList();
+      _categoryId = match.isNotEmpty ? match.first.id : null;
+    }
 
-    final masterUoms = _classifications['uom'] ?? const <String>[];
-    _defaultUom = masterUoms.contains('each')
-        ? 'each'
-        : (masterUoms.isNotEmpty ? masterUoms.first : 'each');
+    final masterUoms = _classifications['uom'] ?? const <({String id, String name})>[];
+    final each = masterUoms.where((o) => o.name == 'each').toList();
+    if (each.isNotEmpty) {
+      _defaultUom = 'each';
+      _uomId = each.first.id;
+    } else if (masterUoms.isNotEmpty) {
+      _defaultUom = masterUoms.first.name;
+      _uomId = masterUoms.first.id;
+    } else {
+      _defaultUom = 'each';
+      _uomId = null;
+    }
     _uom.text = _defaultUom;
     _defaultStatus = 'active';
     _status = _defaultStatus;
@@ -193,7 +211,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       final result = await ref.read(catalogProvider.notifier).listClassifications();
       if (!mounted) return;
       setState(() {
-        _classifications = result.lists;
+        _classifications = result.options;
         _classificationsHint = result.hint;
         _classificationsFromProducts = result.fromProducts;
         _loadingClassifications = false;
@@ -320,13 +338,17 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     required String type,
     required String title,
     required TextEditingController controller,
+    required void Function(String? id) setId,
+    String? currentId,
     String? defaultValue,
     bool allowEmpty = true,
     String emptyLabel = 'None',
   }) async {
-    final options = List<String>.from(_classifications[type] ?? const []);
+    final options = List<({String id, String name})>.from(_classifications[type] ?? const []);
     final current = controller.text.trim();
-    if (current.isNotEmpty && !options.contains(current)) options.insert(0, current);
+    if (current.isNotEmpty && !options.any((o) => o.name == current)) {
+      options.insert(0, (id: currentId ?? 'product:$type:$current', name: current));
+    }
     if (options.isEmpty) {
       final refresh = await confirm(
         context,
@@ -343,17 +365,32 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       title: title,
       options: [
         if (allowEmpty) ('', emptyLabel),
-        for (final o in options) (o, o + (defaultValue != null && o == defaultValue ? ' · Default' : '')),
+        for (final o in options)
+          (o.id, o.name + (defaultValue != null && o.name == defaultValue ? ' · Default' : '')),
       ],
     );
     if (choice == null || !mounted) return;
-    setState(() => controller.text = choice);
+    if (choice.isEmpty) {
+      setState(() {
+        controller.text = '';
+        setId(null);
+      });
+      return;
+    }
+    final match = options.where((o) => o.id == choice).toList();
+    final name = match.isNotEmpty ? match.first.name : choice;
+    setState(() {
+      controller.text = name;
+      setId(choice);
+    });
   }
 
   Future<void> _pickCategory() => _pickFromClassifications(
         type: 'category',
         title: 'Category',
         controller: _category,
+        currentId: _categoryId,
+        setId: (id) => _categoryId = id,
         defaultValue: _defaultCategory,
         emptyLabel: 'No category',
       );
@@ -362,6 +399,8 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         type: 'sub_category',
         title: 'Sub-category',
         controller: _subCategory,
+        currentId: _subCategoryId,
+        setId: (id) => _subCategoryId = id,
         emptyLabel: 'None',
       );
 
@@ -369,6 +408,8 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         type: 'brand',
         title: 'Brand',
         controller: _brand,
+        currentId: _brandId,
+        setId: (id) => _brandId = id,
         emptyLabel: 'None',
       );
 
@@ -376,6 +417,8 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         type: 'pack_size',
         title: 'Pack size',
         controller: _packSize,
+        currentId: _packSizeId,
+        setId: (id) => _packSizeId = id,
         emptyLabel: 'None',
       );
 
@@ -383,6 +426,8 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         type: 'uom',
         title: 'Sold as',
         controller: _uom,
+        currentId: _uomId,
+        setId: (id) => _uomId = id,
         defaultValue: _defaultUom,
         allowEmpty: false,
       );
@@ -576,13 +621,18 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
             quantity: int.parse(_qty.text.trim()),
             sku: _sku.text.trim().isEmpty ? null : _sku.text.trim(),
             barcode: _barcode.text.trim().isEmpty ? null : _barcode.text.trim(),
+            categoryId: _categoryId,
             category: _category.text.trim().isEmpty ? null : _category.text.trim(),
+            subCategoryId: _subCategoryId,
             subCategory: _subCategory.text.trim().isEmpty ? null : _subCategory.text.trim(),
+            brandId: _brandId,
             brand: _brand.text.trim().isEmpty ? null : _brand.text.trim(),
+            packSizeId: _packSizeId,
             packSize: _packSize.text.trim().isEmpty ? null : _packSize.text.trim(),
             costPricePence: costPence,
             currency: _currency,
             taxCodeId: _taxCodeId,
+            uomId: _uomId,
             uom: _uom.text.trim().isEmpty ? _defaultUom : _uom.text.trim(),
             status: _status,
             warehouseId: _warehouseId,
@@ -669,7 +719,14 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     }
     _attributes.clear();
     _category.text = _defaultCategory;
+    final catMatch = (_classifications['category'] ?? const []).where((o) => o.name == _defaultCategory).toList();
+    _categoryId = catMatch.isNotEmpty ? catMatch.first.id : null;
+    _subCategoryId = null;
+    _brandId = null;
+    _packSizeId = null;
     _uom.text = _defaultUom;
+    final uomMatch = (_classifications['uom'] ?? const []).where((o) => o.name == _defaultUom).toList();
+    _uomId = uomMatch.isNotEmpty ? uomMatch.first.id : null;
     _taxCodeId = _defaultTax.id.isEmpty ? null : _defaultTax.id;
     _warehouseId = _defaultWarehouseId;
     _status = _defaultStatus;
