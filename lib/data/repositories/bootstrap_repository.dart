@@ -10,14 +10,29 @@ class BootstrapController extends Notifier<BootstrapData> {
   @override
   BootstrapData build() {
     final j = ref.read(initialDataProvider).bootstrap;
-    return j == null ? const BootstrapData() : BootstrapData.fromJson(j);
+    if (j == null) return const BootstrapData();
+    final session = ref.read(sessionProvider);
+    // Ignore bootstrap cached for a different org / API host (missing keys = stale).
+    if (session.isLoggedIn && session.user != null) {
+      final cachedOrg = j['orgId'] == null ? null : '${j['orgId']}';
+      final cachedUrl = j['baseUrl'] == null ? null : '${j['baseUrl']}';
+      if (cachedOrg != session.user!.orgId || cachedUrl != session.baseUrl) {
+        return const BootstrapData();
+      }
+    }
+    return BootstrapData.fromJson(j);
   }
 
   Future<BootstrapData> refresh() async {
     final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/bootstrap') as Map);
     state = BootstrapData.fromJson(res);
-    await ref.read(localDbProvider).putKv('bootstrap', state.toJson());
-    final registerId = ref.read(sessionProvider).registerId;
+    final session = ref.read(sessionProvider);
+    await ref.read(localDbProvider).putKv('bootstrap', {
+      ...state.toJson(),
+      'orgId': session.user?.orgId,
+      'baseUrl': session.baseUrl,
+    });
+    final registerId = session.registerId;
     if (registerId != null && state.register(registerId) == null) await ref.read(sessionProvider.notifier).clearRegister();
     return state;
   }

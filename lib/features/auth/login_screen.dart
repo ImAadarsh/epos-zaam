@@ -43,11 +43,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _busy = true;
       _error = null;
     });
+    // Capture before login: RootGate leaves this screen once the session is set.
+    final sessionNotifier = ref.read(sessionProvider.notifier);
+    final bootstrapNotifier = ref.read(bootstrapProvider.notifier);
+    final settingsNotifier = ref.read(settingsProvider.notifier);
+    final catalogNotifier = ref.read(catalogProvider.notifier);
     try {
-      await ref.read(sessionProvider.notifier).login(baseUrl: _server.text, email: _email.text, password: _password.text);
-      await ref.read(bootstrapProvider.notifier).refresh();
-      await ref.read(settingsProvider.notifier).applyOrgVat(ref.read(bootstrapProvider).taxCodes);
-      ref.read(catalogProvider.notifier).sync(full: true);
+      await sessionNotifier.login(baseUrl: _server.text, email: _email.text, password: _password.text);
+      // Session listen clears mismatched offline catalogue; bootstrap + full sync for this org.
+      final boot = await bootstrapNotifier.refresh();
+      await settingsNotifier.applyOrgVat(boot.taxCodes);
+      await catalogNotifier.sync(full: true);
     } catch (e) {
       if (mounted) setState(() => _error = errorMessage(e));
     } finally {
@@ -101,7 +107,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       TextField(
                         controller: _server,
                         keyboardType: TextInputType.url,
-                        decoration: const InputDecoration(labelText: 'Server URL', prefixIcon: Icon(Icons.dns_outlined), helperText: 'Zaam API, e.g. https://erp-api.zaamaitech.co.uk'),
+                        decoration: InputDecoration(
+                          labelText: 'Server URL',
+                          prefixIcon: const Icon(Icons.dns_outlined),
+                          helperText: 'Must match this build (DEV: ${AppConfig.defaultApiBaseUrl})',
+                        ),
                       ),
                     ],
                     if (_error != null) ...[

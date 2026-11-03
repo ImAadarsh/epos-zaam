@@ -236,3 +236,93 @@ Future<T?> pickOption<T>(BuildContext context, {required String title, required 
     ),
   );
 }
+
+/// Searchable option picker (ERP SearchableSelect parity for till forms).
+///
+/// Returns the selected value, or [emptyValue] when the empty row is tapped.
+/// Cancel / dismiss returns `null` (unchanged). Pass a distinct [emptyValue]
+/// (e.g. `''`) when clearing must be distinguishable from cancel.
+Future<T?> pickSearchableOption<T>(
+  BuildContext context, {
+  required String title,
+  required List<(T value, String label)> options,
+  String searchHint = 'Search…',
+  String? emptyLabel,
+  T? emptyValue,
+  String? selectedValueKey,
+  String Function(T value)? valueKey,
+}) {
+  return showModalBottomSheet<T>(
+    context: context,
+    isScrollControlled: true,
+    builder: (ctx) {
+      var query = '';
+      return StatefulBuilder(
+        builder: (ctx, setModal) {
+          final q = query.trim().toLowerCase();
+          final filtered = q.isEmpty
+              ? options
+              : options.where((o) => o.$2.toLowerCase().contains(q)).toList();
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 16,
+              bottom: MediaQuery.viewInsetsOf(ctx).bottom + 16,
+            ),
+            child: SizedBox(
+              height: MediaQuery.sizeOf(ctx).height * 0.65,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(title, style: Theme.of(ctx).textTheme.titleLarge),
+                  const SizedBox(height: 8),
+                  TextField(
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: searchHint,
+                      prefixIcon: const Icon(Icons.search),
+                    ),
+                    onChanged: (v) => setModal(() => query = v),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: ListView(
+                      children: [
+                        if (emptyLabel != null)
+                          ListTile(
+                            title: Text(emptyLabel),
+                            onTap: () => Navigator.pop(ctx, emptyValue),
+                          ),
+                        if (filtered.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              q.isEmpty ? 'No options yet.' : 'No matches for “$query”.',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
+                                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          )
+                        else
+                          for (final (value, label) in filtered)
+                            ListTile(
+                              title: Text(label),
+                              selected: selectedValueKey != null &&
+                                  valueKey != null &&
+                                  valueKey(value) == selectedValueKey,
+                              onTap: () => Navigator.pop(ctx, value),
+                            ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+}

@@ -61,7 +61,11 @@ class SyncService {
       if (register != null) await ref.read(settingsProvider.notifier).applyRegisterDefaults(register.id, register.settings);
       await ref.read(settingsProvider.notifier).applyOrgVat(ref.read(bootstrapProvider).taxCodes);
     });
-    await _ifOnline(() => ref.read(catalogProvider.notifier).sync(full: fullCatalog));
+    await _ifOnline(() async {
+      final catalog = ref.read(catalogProvider.notifier);
+      final needFull = fullCatalog || !await catalog.cacheMatchesSession();
+      await catalog.sync(full: needFull);
+    });
     await _ifOnline(() => ref.read(shiftProvider.notifier).reconcile());
     await _ifOnline(() => ref.read(clockProvider.notifier).refresh());
   }

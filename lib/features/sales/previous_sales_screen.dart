@@ -12,11 +12,15 @@ import '../../core/utils/responsive.dart';
 import '../../data/models/sale.dart';
 import '../../data/repositories/sales_repository.dart';
 import '../../data/repositories/session.dart';
+import '../shell/app_shell.dart';
 import '../shell/status_bar.dart';
 import 'refund_screen.dart';
 import 'sale_detail_screen.dart';
 
 enum _Scope { thisRegister, all }
+
+/// Shell tab index for Previous Sales (must match [AppShell] destinations).
+const _salesTabIndex = 1;
 
 /// Previous Sales: server history merged with this device's not-yet-synced sales.
 class PreviousSalesScreen extends ConsumerStatefulWidget {
@@ -32,6 +36,7 @@ class PreviousSalesScreen extends ConsumerStatefulWidget {
 class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
   final _search = TextEditingController();
   Timer? _debounce;
+  Timer? _autoRefreshTimer;
   _Scope _scope = _Scope.thisRegister;
   DateTime? _day;
   List<SaleSummary> _remote = [];
@@ -41,17 +46,55 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
   bool _loading = false;
   String? _error;
 
+  /// Register id used for the last successful / in-flight "This register" fetch.
+  String? _fetchedForRegisterId;
+  int _loadSeq = 0;
+
   @override
   void initState() {
     super.initState();
-    Future.microtask(_load);
+    // Post-frame so session/register from hydration are readable; IndexedStack mounts
+    // this tab at shell open (often before the user opens Sales).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadWhenReady();
+    });
+    // Auto-refresh periodically so newly completed sales appear without a manual page reload.
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted) return;
+      if (widget.embedded && ref.read(shellTabProvider) != _salesTabIndex) return;
+      if (!_loading && _page == 0 && _search.text.trim().isEmpty) {
+        _load();
+      }
+    });
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _autoRefreshTimer?.cancel();
     _search.dispose();
     super.dispose();
+  }
+
+  bool get _registerReady {
+    final id = ref.read(sessionProvider).registerId;
+    return id != null && id.isNotEmpty;
+  }
+
+  /// Fetches only when "This register" has a register id (or scope is all).
+  Future<void> _loadWhenReady() async {
+    if (_scope == _Scope.thisRegister && !_registerReady) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = null;
+          _remote = [];
+          _total = 0;
+        });
+      }
+      return;
+    }
+    await _reload();
   }
 
   /// Reloads from the first page (filters changed).
@@ -61,35 +104,43 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
   }
 
   Future<void> _load() async {
+    if (_scope == _Scope.thisRegister && !_registerReady) {
+      return _loadWhenReady();
+    }
+    final seq = ++_loadSeq;
+    final session = ref.read(sessionProvider);
+    final registerId = _scope == _Scope.thisRegister ? session.registerId : null;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final session = ref.read(sessionProvider);
       final day = _day;
       final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/sales', query: {
         'search': _search.text.trim().isEmpty ? null : _search.text.trim(),
-        'registerId': _scope == _Scope.thisRegister ? session.registerId : null,
+        'registerId': registerId,
         'from': day == null ? null : DateTime(day.year, day.month, day.day).toUtc().toIso8601String(),
         'to': day == null ? null : DateTime(day.year, day.month, day.day, 23, 59, 59).toUtc().toIso8601String(),
         'limit': _pageSize,
         'offset': _page * _pageSize,
       }) as Map);
-      if (!mounted) return;
+      if (!mounted || seq != _loadSeq) return;
       final items = ((res['items'] as List?) ?? []).map((e) => SaleSummary.fromServer(Map<String, dynamic>.from(e as Map))).toList();
       setState(() {
         _remote = items;
         _total = (res['total'] as num?)?.toInt() ?? (_page * _pageSize + items.length);
+        _fetchedForRegisterId = registerId;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = (e is ApiException && e.isNetwork) ? 'Offline: showing sales made on this device.' : errorMessage(e));
+      if (mounted && seq == _loadSeq) {
+        setState(() => _error = (e is ApiException && e.isNetwork) ? 'Offline: showing sales made on this device.' : errorMessage(e));
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && seq == _loadSeq) setState(() => _loading = false);
     }
   }
 
-  /// Device-only (unsynced/offline) sales are shown on the first page, above server results.
+  /// Local device sales whose receipt numbers are not yet in [_remote] are shown on the first page, above server results.
   List<SaleSummary> _merged(List<SaleRecord> local) {
     if (_page > 0 && _error == null) return _remote;
     final q = _search.text.trim().toLowerCase();
@@ -97,7 +148,6 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
     final remoteNumbers = _remote.map((r) => r.receiptNumber).toSet();
     final extra = local
         .where((s) => !remoteNumbers.contains(s.receiptNumber))
-        .where((s) => _error != null || s.sync != SyncState.synced)
         .where((s) => _scope == _Scope.all || s.registerId == session.registerId)
         .where((s) => _day == null || DateUtils.isSameDay(s.soldAt, _day))
         .where((s) => q.isEmpty || s.receiptNumber.toLowerCase().contains(q) || formatPence(s.totalPence).contains(q))
@@ -109,6 +159,28 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Race fix: shell IndexedStack mounts this screen before register may be set;
+    // also re-fetch when the user enters the Sales tab or the register changes.
+    ref.listen(sessionProvider.select((s) => s.registerId), (prev, next) {
+      if (_scope != _Scope.thisRegister) return;
+      if (next == null || next.isEmpty) return;
+      if (next == _fetchedForRegisterId && _error == null) return;
+      _loadWhenReady();
+    });
+    // When a local sale is completed, immediately trigger a fresh load so server list stays in sync
+    ref.listen(localSalesProvider, (prev, next) {
+      if (prev != null && next.length != prev.length) {
+        _reload();
+      }
+    });
+    if (widget.embedded) {
+      ref.listen(shellTabProvider, (prev, next) {
+        if (next == _salesTabIndex) {
+          _loadWhenReady();
+        }
+      });
+    }
+
     final local = ref.watch(localSalesProvider);
     final rows = _merged(local);
     final theme = Theme.of(context);

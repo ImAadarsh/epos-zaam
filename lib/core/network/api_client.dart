@@ -85,6 +85,10 @@ class ApiClient {
 
   Future<dynamic> post(String path, {Object? data}) => _wrap(() => dio.post(path, data: data));
 
+  /// Multipart POST (e.g. POS catalog image → `/uploads` via API). Do not set Content-Type; Dio adds the boundary.
+  Future<dynamic> postMultipart(String path, {required FormData data}) =>
+      _wrap(() => dio.post(path, data: data, options: Options(contentType: 'multipart/form-data')));
+
   Future<dynamic> put(String path, {Object? data}) => _wrap(() => dio.put(path, data: data));
 
   Future<dynamic> patch(String path, {Object? data}) => _wrap(() => dio.patch(path, data: data));

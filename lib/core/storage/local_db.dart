@@ -12,7 +12,8 @@ import 'db_factory_io.dart' if (dart.library.js_interop) 'db_factory_web.dart';
 class LocalDb {
   LocalDb(this.db);
 
-  static const String name = 'zaam_epos';
+  /// Bumped to `v2` so browsers drop pre-org-scoped product caches (wrong-org tiles).
+  static const String name = 'zaam_epos_v2';
 
   final Database db;
 

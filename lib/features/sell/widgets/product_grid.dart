@@ -93,7 +93,9 @@ class ProductTile extends StatelessWidget {
   static const _palette = [Color(0xFFD4A017), Color(0xFF34495E), Color(0xFF8E6C8A), Color(0xFF2E8B57), Color(0xFFB5651D), Color(0xFF4A6FA5), Color(0xFF7B8D42)];
 
   /// Prefer barcode; fall back to SKU so staff can still verify the code on the tile.
+  /// Multi-variant parent tiles omit a single barcode (misleading for other SKUs).
   String? get _codeLabel {
+    if (variants > 1) return null;
     final barcode = product.barcodes.map((b) => b.trim()).firstWhere((b) => b.isNotEmpty, orElse: () => '');
     if (barcode.isNotEmpty) return barcode;
     final sku = product.sku.trim();
@@ -104,6 +106,8 @@ class ProductTile extends StatelessWidget {
     final barcode = product.barcodes.map((b) => b.trim()).firstWhere((b) => b.isNotEmpty, orElse: () => '');
     return barcode.isNotEmpty;
   }
+
+  String get _tileTitle => variants > 1 ? product.name : product.displayName;
 
   @override
   Widget build(BuildContext context) {
@@ -164,7 +168,7 @@ class ProductTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        child: Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, height: 1.2)),
+                        child: Text(_tileTitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, height: 1.2)),
                       ),
                       if (_codeLabel != null) ...[
                         const SizedBox(height: 3),

@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/api_exception.dart';
@@ -6,6 +9,7 @@ import '../../core/sync/connectivity.dart';
 import '../../core/utils/app_log.dart';
 import '../../core/utils/money.dart';
 import '../models/catalog.dart';
+import 'bootstrap_repository.dart';
 import 'session.dart';
 
 class CatalogState {
@@ -76,7 +80,10 @@ class CatalogState {
     final hits = <Product>[];
     for (final p in products.values) {
       if (!p.active) continue;
-      if (p.sku.toLowerCase() == key || p.barcodes.any((b) => b.toLowerCase() == key)) {
+      final parentSku = p.catalogItemSku?.trim().toLowerCase();
+      if (p.sku.toLowerCase() == key ||
+          (parentSku != null && parentSku.isNotEmpty && parentSku == key) ||
+          p.barcodes.any((b) => b.toLowerCase() == key)) {
         hits.add(p);
       }
     }
@@ -131,6 +138,8 @@ class CatalogState {
       }
 
       claim(p.sku);
+      final parentSku = p.catalogItemSku?.trim();
+      if (parentSku != null && parentSku.isNotEmpty) claim(parentSku);
       for (final b in p.barcodes) {
         claim(b);
       }
@@ -187,19 +196,89 @@ Map<String, Product> purgeStaleBarcodeDuplicates(Map<String, Product> products) 
 
 /// Product/modifier cache with full + incremental sync from `/api/pos/catalog`
 /// and stock refresh from `/api/pos/stock`.
+///
+/// The offline store is keyed by organisation + API base URL so a till that
+/// previously synced another org (or prod vs DEV) never shows foreign tiles.
+///
+/// `kWarehouseCatalogScope` bumps whenever the server catalogue visibility rule
+/// changes (e.g. register-warehouse filtering) so stale offline tiles are
+/// discarded and a full sync is forced once.
+const int kWarehouseCatalogScope = 1;
+
 class CatalogController extends Notifier<CatalogState> {
   @override
   CatalogState build() {
+    // Drop foreign/offline tiles as soon as org, API host, or session changes.
+    // Callers (login / SyncService) still run a full sync afterwards.
+    ref.listen<SessionState>(sessionProvider, (prev, next) {
+      final orgChanged = prev?.user?.orgId != next.user?.orgId;
+      final urlChanged = prev?.baseUrl != next.baseUrl;
+      final signedOut = (prev?.isLoggedIn ?? false) && !next.isLoggedIn;
+      if (orgChanged || urlChanged || signedOut) {
+        Future.microtask(clear);
+      }
+    });
     Future.microtask(loadLocal);
     return const CatalogState();
   }
 
   LocalDb get _db => ref.read(localDbProvider);
 
+  Future<Map<String, dynamic>> _readMeta() async => await _db.getKv('catalog_meta') ?? {};
+
+  /// True when the on-disk catalogue belongs to the signed-in org + API host.
+  Future<bool> cacheMatchesSession() async {
+    final session = ref.read(sessionProvider);
+    if (!session.isLoggedIn || session.user == null) return false;
+    final meta = await _readMeta();
+    return '${meta['orgId']}' == session.user!.orgId && '${meta['baseUrl']}' == session.baseUrl;
+  }
+
+  /// Stock is scoped to the register's warehouse. A cached catalogue from another
+  /// register (or from before a register was chosen) must not be delta-synced —
+  /// otherwise zero stock from an empty warehouse sticks forever.
+  Future<bool> cacheMatchesRegister() async {
+    final session = ref.read(sessionProvider);
+    if (session.registerId == null) return true;
+    final meta = await _readMeta();
+    if (meta['registerId'] == null) return false;
+    return '${meta['registerId']}' == session.registerId;
+  }
+
+  /// True when the on-disk catalogue was synced under the current warehouse-scope rule.
+  Future<bool> cacheMatchesCatalogScope() async {
+    final meta = await _readMeta();
+    final raw = meta['warehouseCatalogScope'];
+    final scope = raw is int ? raw : int.tryParse('$raw') ?? 0;
+    return scope == kWarehouseCatalogScope;
+  }
+
   Future<void> loadLocal() async {
+    final session = ref.read(sessionProvider);
+    final meta = await _readMeta();
+    final scopedOk = session.isLoggedIn &&
+        session.user != null &&
+        '${meta['orgId']}' == session.user!.orgId &&
+        '${meta['baseUrl']}' == session.baseUrl;
+    final scopeRaw = meta['warehouseCatalogScope'];
+    final catalogScope =
+        scopeRaw is int ? scopeRaw : int.tryParse('$scopeRaw') ?? 0;
+    final catalogScopeOk = catalogScope == kWarehouseCatalogScope;
+
+    if (session.isLoggedIn && (!scopedOk || !catalogScopeOk)) {
+      AppLog.warn(
+        !scopedOk
+            ? 'Discarding offline catalogue '
+                '(cache org=${meta['orgId']} url=${meta['baseUrl']} ≠ '
+                'session org=${session.user?.orgId} url=${session.baseUrl})'
+            : 'Discarding offline catalogue (warehouseCatalogScope $catalogScope ≠ $kWarehouseCatalogScope)',
+      );
+      await clear();
+      return;
+    }
+
     final rows = await _db.all(LocalDb.products);
     final groups = await _db.all(LocalDb.modifierGroups);
-    final meta = await _db.getKv('catalog_meta') ?? {};
     state = state.copyWith(
       products: {for (final r in rows) '${r['variantId']}': Product.fromJson(r)},
       modifierGroups: groups.map(ModifierGroup.fromJson).toList(),
@@ -208,26 +287,58 @@ class CatalogController extends Notifier<CatalogState> {
       stockServerTime: meta['stockServerTime'] as String?,
       lastSync: meta['lastSync'] != null ? DateTime.tryParse('${meta['lastSync']}') : null,
     );
-    AppLog.info('Loaded ${rows.length} cached products');
+    AppLog.info('Loaded ${rows.length} cached products for org ${meta['orgId']}');
   }
 
-  Future<void> _saveMeta() => _db.putKv('catalog_meta', {
+  Future<void> _saveMeta({
+    required String orgId,
+    required String baseUrl,
+    String? registerId,
+    String? warehouseId,
+  }) =>
+      _db.putKv('catalog_meta', {
+        'orgId': orgId,
+        'baseUrl': baseUrl,
+        'registerId': registerId ?? ref.read(sessionProvider).registerId,
+        'warehouseId': warehouseId,
+        'warehouseCatalogScope': kWarehouseCatalogScope,
         'serverTime': state.serverTime,
         'stockServerTime': state.stockServerTime,
         'lastSync': state.lastSync?.toIso8601String(),
       });
 
-  /// Full sync when nothing is cached, otherwise only changes since the last sync.
+  /// Full sync when nothing is cached / org scope mismatch, otherwise deltas.
   Future<void> sync({bool full = false}) async {
     final session = ref.read(sessionProvider);
-    if (!session.isLoggedIn || state.syncing) return;
-    final since = full || state.products.isEmpty ? null : state.serverTime;
+    if (!session.isLoggedIn || session.user == null || state.syncing) return;
+    final scopeOk = await cacheMatchesSession();
+    final registerOk = await cacheMatchesRegister();
+    final catalogScopeOk = await cacheMatchesCatalogScope();
+    if (!scopeOk && state.products.isNotEmpty) {
+      AppLog.warn('Forcing full catalogue sync after org/API scope mismatch');
+      await clear();
+    }
+    if ((!registerOk || !catalogScopeOk) && !full) {
+      AppLog.warn(
+        !catalogScopeOk
+            ? 'Forcing full catalogue sync after warehouse-scope rule change'
+            : 'Forcing full catalogue sync after register/warehouse change',
+      );
+    }
+    final since =
+        full || !scopeOk || !registerOk || !catalogScopeOk || state.products.isEmpty ? null : state.serverTime;
     state = state.copyWith(syncing: true, clearError: true);
     try {
       final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/catalog', query: {
         'registerId': session.registerId,
         'since': since,
       }) as Map);
+      final responseOrg = res['organizationId'] == null ? null : '${res['organizationId']}';
+      if (responseOrg != null && responseOrg != session.user!.orgId) {
+        throw ApiException(
+          'Catalogue organisation mismatch (API $responseOrg ≠ session ${session.user!.orgId})',
+        );
+      }
       final incoming = ((res['products'] as List?) ?? []).map((e) => Product.fromApi(Map<String, dynamic>.from(e as Map))).toList();
       final groups = ((res['modifierGroups'] as List?) ?? []).map((e) => ModifierGroup.fromJson(Map<String, dynamic>.from(e as Map))).toList();
 
@@ -261,6 +372,7 @@ class CatalogController extends Notifier<CatalogState> {
       }
 
       await _db.replaceAll(LocalDb.modifierGroups, {for (final g in groups) g.id: g.toJson()});
+      final responseWarehouseId = res['warehouseId'] == null ? null : '${res['warehouseId']}';
       state = state.copyWith(
         products: next,
         modifierGroups: groups,
@@ -270,9 +382,15 @@ class CatalogController extends Notifier<CatalogState> {
         serverTime: res['serverTime'] as String?,
         stockServerTime: since == null ? res['serverTime'] as String? : state.stockServerTime,
       );
-      await _saveMeta();
+      await _saveMeta(
+        orgId: session.user!.orgId,
+        baseUrl: session.baseUrl,
+        registerId: session.registerId,
+        warehouseId: responseWarehouseId,
+      );
       AppLog.info(
-        'Catalogue sync (${since == null ? 'full' : 'delta'}): ${incoming.length} rows'
+        'Catalogue sync (${since == null ? 'full' : 'delta'}) org=${session.user!.orgId}'
+        ' register=${session.registerId} warehouse=$responseWarehouseId: ${incoming.length} rows'
         '${purged > 0 ? ', purged $purged stale barcode twin(s)' : ''}',
       );
     } catch (e) {
@@ -285,31 +403,69 @@ class CatalogController extends Notifier<CatalogState> {
   /// Pulls stock levels changed since the last stock sync.
   Future<void> syncStock() async {
     final session = ref.read(sessionProvider);
-    if (!session.isLoggedIn || state.products.isEmpty) return;
+    if (!session.isLoggedIn || session.user == null || state.products.isEmpty) return;
+    if (!await cacheMatchesSession() ||
+        !await cacheMatchesRegister() ||
+        !await cacheMatchesCatalogScope()) {
+      await sync(full: true);
+      return;
+    }
     try {
-      final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/stock', query: {
+      final meta = await _readMeta();
+      final cachedWarehouseId = meta['warehouseId'] == null ? null : '${meta['warehouseId']}';
+      // Probe with a delta first; if the register's warehouse changed server-side,
+      // fall through to a full stock replace for this warehouse.
+      var res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/stock', query: {
         'registerId': session.registerId,
         'since': state.stockServerTime,
       }) as Map);
+      final responseWarehouseId = res['warehouseId'] == null ? null : '${res['warehouseId']}';
+      final warehouseChanged =
+          responseWarehouseId != null && cachedWarehouseId != null && responseWarehouseId != cachedWarehouseId;
+      final fullStock = warehouseChanged || state.stockServerTime == null;
+      if (fullStock) {
+        res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/stock', query: {
+          'registerId': session.registerId,
+        }) as Map);
+      }
       final levels = (res['levels'] as List?) ?? [];
-      if (levels.isNotEmpty) {
+      if (fullStock || levels.isNotEmpty) {
         final next = Map.of(state.products);
         final changed = <String, Map<String, dynamic>>{};
+        final qtyById = <String, int>{};
         for (final l in levels) {
           final m = Map<String, dynamic>.from(l as Map);
-          final id = '${m['variantId']}';
-          final p = next[id];
-          if (p == null) continue;
-          final updated = p.copyWith(stock: (m['quantity'] as num?)?.toInt() ?? 0);
-          next[id] = updated;
-          changed[id] = updated.toJson();
+          qtyById['${m['variantId']}'] = (m['quantity'] as num?)?.toInt() ?? 0;
         }
-        await _db.putMany(LocalDb.products, changed);
+        if (fullStock) {
+          // Replace every tracked quantity for this warehouse (missing → 0).
+          for (final entry in next.entries) {
+            final p = entry.value;
+            if (p.stock == null && !qtyById.containsKey(p.variantId)) continue;
+            final updated = p.copyWith(stock: qtyById[p.variantId] ?? 0);
+            next[entry.key] = updated;
+            changed[entry.key] = updated.toJson();
+          }
+        } else {
+          for (final e in qtyById.entries) {
+            final p = next[e.key];
+            if (p == null) continue;
+            final updated = p.copyWith(stock: e.value);
+            next[e.key] = updated;
+            changed[e.key] = updated.toJson();
+          }
+        }
+        if (changed.isNotEmpty) await _db.putMany(LocalDb.products, changed);
         state = state.copyWith(products: next, stockServerTime: res['serverTime'] as String?);
       } else {
         state = state.copyWith(stockServerTime: res['serverTime'] as String?);
       }
-      await _saveMeta();
+      await _saveMeta(
+        orgId: session.user!.orgId,
+        baseUrl: session.baseUrl,
+        registerId: session.registerId,
+        warehouseId: res['warehouseId'] == null ? cachedWarehouseId : '${res['warehouseId']}',
+      );
     } catch (e) {
       if (e is ApiException && e.isNetwork) ref.read(onlineProvider.notifier).markOffline();
       AppLog.warn('Stock sync failed: $e');
@@ -393,8 +549,259 @@ class CatalogController extends Notifier<CatalogState> {
     return updated;
   }
 
-  /// Creates a catalogue product via `POST /api/pos/products` and upserts it into the local Sell grid.
-  /// Payload mirrors ERP `/api/catalog/items` create fields that POS auth supports.
+  /// Prefer real classification ids; skip synthetic `product:type:Name` fallbacks (API resolves names).
+  static String? realClassificationId(String? id) {
+    if (id == null || id.isEmpty) return null;
+    if (id.startsWith('product:')) return null;
+    return id;
+  }
+
+  /// Creates a catalogue product via `POST /api/pos/catalog-items` (catalog_items only, post-023).
+  /// Optional [imageBytes] multipart field `image` → API writes under `/uploads/product-media/…`.
+  Future<Map<String, dynamic>> createCatalogItem({
+    required String name,
+    String? sku,
+    String? categoryId,
+    String? category,
+    String? subCategoryId,
+    String? subCategory,
+    String? brandId,
+    String? brand,
+    String? packSizeId,
+    String? packSize,
+    String? currency,
+    String? taxCodeId,
+    String? uomId,
+    String? uom,
+    String status = 'active',
+    String? description,
+    String? remarks,
+    String? supplierSku,
+    int? leadTimeDays,
+    String? hsCode,
+    String? countryOfOrigin,
+    List<int>? imageBytes,
+    String? imageFilename,
+  }) async {
+    final fields = <String, dynamic>{
+      'name': name,
+      'sku': sku,
+      'categoryId': realClassificationId(categoryId),
+      'category': category,
+      'subCategoryId': realClassificationId(subCategoryId),
+      'subCategory': subCategory,
+      'brandId': realClassificationId(brandId),
+      'brand': brand,
+      'packSizeId': realClassificationId(packSizeId),
+      'packSize': packSize,
+      'currency': currency,
+      'taxCodeId': taxCodeId,
+      'uomId': realClassificationId(uomId),
+      'uom': uom,
+      'status': status,
+      'description': description,
+      'remarks': remarks,
+      'supplierSku': supplierSku,
+      'leadTimeDays': leadTimeDays,
+      'hsCode': hsCode,
+      'countryOfOrigin': countryOfOrigin,
+    };
+    final api = ref.read(apiClientProvider);
+    final Map res;
+    if (imageBytes != null && imageBytes.isNotEmpty) {
+      final form = FormData.fromMap({
+        ..._multipartFields(fields),
+        'image': MultipartFile.fromBytes(
+          imageBytes,
+          filename: (imageFilename?.trim().isNotEmpty == true) ? imageFilename!.trim() : 'product.jpg',
+        ),
+      });
+      res = Map<String, dynamic>.from(await api.postMultipart('/api/pos/catalog-items', data: form) as Map);
+    } else {
+      res = Map<String, dynamic>.from(await api.post('/api/pos/catalog-items', data: fields) as Map);
+    }
+    return Map<String, dynamic>.from(res['catalogItem'] as Map? ?? res);
+  }
+
+  static Map<String, dynamic> _multipartFields(Map<String, dynamic> fields) {
+    final out = <String, dynamic>{};
+    for (final e in fields.entries) {
+      final v = e.value;
+      if (v == null) continue;
+      if (v is String && v.isEmpty) continue;
+      if (v is Map) {
+        out[e.key] = jsonEncode(v);
+      } else if (v is num || v is bool) {
+        out[e.key] = v;
+      } else {
+        out[e.key] = '$v';
+      }
+    }
+    return out;
+  }
+
+  /// Search parent catalogue products (`GET /api/pos/catalog-items`).
+  Future<List<CatalogItemRef>> searchCatalogItems({String? q, int limit = 40}) async {
+    final session = ref.read(sessionProvider);
+    final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get(
+          '/api/pos/catalog-items',
+          query: {
+            'q': q,
+            'limit': limit,
+            'registerId': session.registerId,
+          },
+        ) as Map);
+    final rows = (res['data'] as List? ?? const []);
+    return [
+      for (final raw in rows) CatalogItemRef.fromApi(Map<String, dynamic>.from(raw as Map)),
+    ];
+  }
+
+  /// Active racks for a warehouse (`GET /api/pos/racks`).
+  Future<List<StockLocationOption>> listRacks({required String warehouseId, String? q, int limit = 200}) async {
+    final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get(
+          '/api/pos/racks',
+          query: {
+            'warehouseId': warehouseId,
+            if (q != null && q.trim().isNotEmpty) 'q': q.trim(),
+            'limit': limit,
+          },
+        ) as Map);
+    final rows = (res['data'] as List? ?? const []);
+    return [
+      for (final raw in rows) StockLocationOption.fromApi(Map<String, dynamic>.from(raw as Map)),
+    ];
+  }
+
+  /// Active bins for a warehouse, optionally filtered by rack (`GET /api/pos/bins`).
+  Future<List<StockLocationOption>> listBins({
+    required String warehouseId,
+    String? rackId,
+    String? q,
+    int limit = 200,
+  }) async {
+    final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get(
+          '/api/pos/bins',
+          query: {
+            'warehouseId': warehouseId,
+            if (rackId != null && rackId.isNotEmpty) 'rackId': rackId,
+            if (q != null && q.trim().isNotEmpty) 'q': q.trim(),
+            'limit': limit,
+          },
+        ) as Map);
+    final rows = (res['data'] as List? ?? const []);
+    return [
+      for (final raw in rows) StockLocationOption.fromApi(Map<String, dynamic>.from(raw as Map)),
+    ];
+  }
+
+  /// Creates a sellable variant via `POST /api/pos/variants` and upserts it into the local Sell grid.
+  Future<Product> createVariant({
+    required String catalogItemId,
+    required String variantSku,
+    String? name,
+    String? option1Name,
+    String? option1Value,
+    String? option2Name,
+    String? option2Value,
+    String? option3Name,
+    String? option3Value,
+    String? barcode,
+    bool autoGenerateBarcode = true,
+    int? costPricePence,
+    required int sellPricePence,
+    String? currency,
+    String status = 'active',
+    String? warehouseId,
+    int quantity = 0,
+    num? reorderLevel,
+    num? reorderQuantity,
+    String? binId,
+    String? binCode,
+    String? rackId,
+    String? rackCode,
+    num? weightValue,
+    String? weightUnit,
+    num? lengthValue,
+    num? widthValue,
+    num? heightValue,
+    String? dimensionUnit,
+    Map<String, dynamic>? attributes,
+    List<int>? imageBytes,
+    String? imageFilename,
+  }) async {
+    final session = ref.read(sessionProvider);
+    final barcodeTrimmed = barcode?.trim();
+    final fields = <String, dynamic>{
+      'catalogItemId': catalogItemId,
+      'variantSku': variantSku,
+      'name': name,
+      'option1Name': option1Name,
+      'option1Value': option1Value,
+      'option2Name': option2Name,
+      'option2Value': option2Value,
+      'option3Name': option3Name,
+      'option3Value': option3Value,
+      'barcode': barcodeTrimmed,
+      'autoGenerateBarcode': (barcodeTrimmed == null || barcodeTrimmed.isEmpty) && autoGenerateBarcode,
+      if (costPricePence != null) 'costPrice': fromPence(costPricePence),
+      'sellPrice': fromPence(sellPricePence),
+      'currency': currency,
+      'status': status,
+      'warehouseId': warehouseId,
+      'registerId': session.registerId,
+      'quantity': quantity,
+      'reorderLevel': reorderLevel,
+      'reorderQuantity': reorderQuantity,
+      'binId': binId,
+      'binCode': binCode,
+      'rackId': rackId,
+      'rackCode': rackCode,
+      'weightValue': weightValue,
+      'weightUnit': weightUnit,
+      'lengthValue': lengthValue,
+      'widthValue': widthValue,
+      'heightValue': heightValue,
+      'dimensionUnit': dimensionUnit,
+      if (attributes != null && attributes.isNotEmpty) 'attributes': attributes,
+    };
+    final api = ref.read(apiClientProvider);
+    final Map res;
+    if (imageBytes != null && imageBytes.isNotEmpty) {
+      final formMap = <String, dynamic>{
+        ..._multipartFields(fields),
+        'image': MultipartFile.fromBytes(
+          imageBytes,
+          filename: (imageFilename?.trim().isNotEmpty == true) ? imageFilename!.trim() : 'variant.jpg',
+        ),
+      };
+      res = Map<String, dynamic>.from(await api.postMultipart('/api/pos/variants', data: FormData.fromMap(formMap)) as Map);
+    } else {
+      res = Map<String, dynamic>.from(await api.post('/api/pos/variants', data: fields) as Map);
+    }
+    final productJson = Map<String, dynamic>.from(res['product'] as Map);
+    var product = Product.fromApi(productJson);
+    // Prefer the qty we just wrote when the create response/sync briefly omits it.
+    if (product.stock == null || (quantity > 0 && (product.stock ?? 0) == 0)) {
+      product = product.copyWith(stock: quantity);
+    }
+    state = state.copyWith(products: {...state.products, product.variantId: product}, loaded: true);
+    await _db.put(LocalDb.products, product.variantId, product.toJson());
+    await sync(full: false);
+    await syncStock();
+    final after = state.products[product.variantId];
+    // If delta sync wiped stock to 0 for the register warehouse before DB catch-up, restore.
+    if (after != null && quantity > 0 && (after.stock ?? 0) == 0) {
+      final registerWh = ref.read(currentRegisterProvider)?.warehouseId;
+      if (warehouseId == null || warehouseId == registerWh) {
+        await applyLocalStock(after.variantId, quantity);
+        return state.products[after.variantId] ?? after.copyWith(stock: quantity);
+      }
+    }
+    return after ?? product;
+  }
+
+  /// Legacy combined create (`POST /api/pos/products`) — prefer [createCatalogItem] + [createVariant].
   Future<Product> createProduct({
     required String name,
     required int sellPricePence,
@@ -429,12 +836,6 @@ class CatalogController extends Notifier<CatalogState> {
     Map<String, dynamic>? attributes,
   }) async {
     final session = ref.read(sessionProvider);
-    // Prefer real classification ids; skip synthetic `product:type:Name` fallbacks (API resolves names).
-    String? realId(String? id) {
-      if (id == null || id.isEmpty) return null;
-      if (id.startsWith('product:')) return null;
-      return id;
-    }
 
     final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).post(
           '/api/pos/products',
@@ -444,18 +845,18 @@ class CatalogController extends Notifier<CatalogState> {
             'quantity': quantity,
             'sku': sku,
             'barcode': barcode,
-            'categoryId': realId(categoryId),
+            'categoryId': realClassificationId(categoryId),
             'category': category,
-            'subCategoryId': realId(subCategoryId),
+            'subCategoryId': realClassificationId(subCategoryId),
             'subCategory': subCategory,
-            'brandId': realId(brandId),
+            'brandId': realClassificationId(brandId),
             'brand': brand,
-            'packSizeId': realId(packSizeId),
+            'packSizeId': realClassificationId(packSizeId),
             'packSize': packSize,
             if (costPricePence != null) 'costPrice': fromPence(costPricePence),
             'currency': currency,
             'taxCodeId': taxCodeId,
-            'uomId': realId(uomId),
+            'uomId': realClassificationId(uomId),
             'uom': uom,
             'status': status,
             'warehouseId': warehouseId,
@@ -477,7 +878,6 @@ class CatalogController extends Notifier<CatalogState> {
     final product = Product.fromApi(productJson);
     state = state.copyWith(products: {...state.products, product.variantId: product}, loaded: true);
     await _db.put(LocalDb.products, product.variantId, product.toJson());
-    // Pull a delta so price-list / stock badges stay aligned with the server.
     await sync(full: false);
     await syncStock();
     return state.products[product.variantId] ?? product;
@@ -586,7 +986,11 @@ class CatalogController extends Notifier<CatalogState> {
   /// Server-side lookup for codes not in the local cache (e.g. a barcode added moments ago).
   Future<Product?> lookupRemote(String code) async {
     try {
-      final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/lookup', query: {'code': code}) as Map);
+      final session = ref.read(sessionProvider);
+      final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/lookup', query: {
+        'code': code,
+        'registerId': session.registerId,
+      }) as Map);
       final id = '${res['variantId']}';
       if (!state.products.containsKey(id)) await sync();
       return state.products[id];

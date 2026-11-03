@@ -15,6 +15,7 @@ class Product {
     required this.variantId,
     required this.catalogItemId,
     required this.sku,
+    this.catalogItemSku,
     required this.name,
     this.variantName,
     this.options = const [],
@@ -39,6 +40,8 @@ class Product {
   final String variantId;
   final String catalogItemId;
   final String sku;
+  /// Parent `catalog_items.sku` when it differs from the variant SKU (offline lookup).
+  final String? catalogItemSku;
   final String name;
   final String? variantName;
   final List<ProductOption> options;
@@ -85,6 +88,7 @@ class Product {
         variantId: variantId,
         catalogItemId: catalogItemId,
         sku: sku,
+        catalogItemSku: catalogItemSku,
         name: name,
         variantName: variantName,
         options: options,
@@ -111,6 +115,9 @@ class Product {
         variantId: '${j['variantId']}',
         catalogItemId: '${j['catalogItemId']}',
         sku: '${j['sku'] ?? ''}',
+        catalogItemSku: j['catalogItemSku'] == null || '${j['catalogItemSku']}'.isEmpty
+            ? null
+            : '${j['catalogItemSku']}',
         name: '${j['name'] ?? 'Item'}',
         variantName: j['variantName'] as String?,
         options: ((j['options'] as List?) ?? []).map((o) => ProductOption.fromJson(Map<String, dynamic>.from(o as Map))).toList(),
@@ -139,6 +146,7 @@ class Product {
         'variantId': variantId,
         'catalogItemId': catalogItemId,
         'sku': sku,
+        'catalogItemSku': catalogItemSku,
         'name': name,
         'variantName': variantName,
         'options': options.map((o) => o.toJson()).toList(),
@@ -164,6 +172,9 @@ class Product {
         variantId: '${j['variantId']}',
         catalogItemId: '${j['catalogItemId']}',
         sku: '${j['sku'] ?? ''}',
+        catalogItemSku: j['catalogItemSku'] == null || '${j['catalogItemSku']}'.isEmpty
+            ? null
+            : '${j['catalogItemSku']}',
         name: '${j['name'] ?? 'Item'}',
         variantName: j['variantName'] as String?,
         options: ((j['options'] as List?) ?? []).map((o) => ProductOption.fromJson(Map<String, dynamic>.from(o as Map))).toList(),
@@ -186,6 +197,86 @@ class Product {
         active: j['active'] != false,
         modifierGroupIds: ((j['modifierGroupIds'] as List?) ?? []).map((e) => '$e').toList(),
         updatedAt: j['updatedAt'] as String?,
+      );
+}
+
+/// Parent catalogue product for Add Vt's. parent picker (`GET /api/pos/catalog-items`).
+class CatalogItemRef {
+  const CatalogItemRef({
+    required this.id,
+    required this.sku,
+    required this.name,
+    this.category,
+    this.brand,
+    this.status = 'active',
+    this.variantCount = 0,
+    this.imageUrl,
+  });
+
+  final String id;
+  final String sku;
+  final String name;
+  final String? category;
+  final String? brand;
+  final String status;
+  final int variantCount;
+  final String? imageUrl;
+
+  String get label {
+    final bits = <String>[name];
+    if (sku.isNotEmpty) bits.add(sku);
+    if (brand != null && brand!.isNotEmpty) bits.add(brand!);
+    return bits.join(' · ');
+  }
+
+  factory CatalogItemRef.fromApi(Map<String, dynamic> j) => CatalogItemRef(
+        id: '${j['id']}',
+        sku: '${j['sku'] ?? ''}',
+        name: '${j['name'] ?? 'Item'}',
+        category: j['category'] as String?,
+        brand: j['brand'] as String?,
+        status: '${j['status'] ?? 'active'}',
+        variantCount: (j['variantCount'] as num?)?.toInt() ?? 0,
+        imageUrl: j['imageUrl'] as String?,
+      );
+}
+
+/// Rack or bin option from `GET /api/pos/racks` / `/bins` (warehouse-scoped).
+class StockLocationOption {
+  const StockLocationOption({
+    required this.id,
+    required this.code,
+    this.name,
+    this.warehouseId,
+    this.rackId,
+    this.rackCode,
+    this.label,
+  });
+
+  final String id;
+  final String code;
+  final String? name;
+  final String? warehouseId;
+  final String? rackId;
+  final String? rackCode;
+  final String? label;
+
+  String get displayLabel {
+    final custom = label?.trim();
+    if (custom != null && custom.isNotEmpty) return custom;
+    final n = name?.trim();
+    if (n != null && n.isNotEmpty && n != code) return '$code — $n';
+    return code;
+  }
+
+  factory StockLocationOption.fromApi(Map<String, dynamic> j) => StockLocationOption(
+        id: '${j['id']}',
+        code: '${j['code'] ?? ''}',
+        name: j['name'] as String?,
+        warehouseId: j['warehouseId'] != null ? '${j['warehouseId']}' : null,
+        rackId: j['rackId'] != null ? '${j['rackId']}' : null,
+        rackCode: j['rackCode'] as String?,
+        label: j['label'] as String?,
       );
 }
 

@@ -19,7 +19,7 @@ import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/sales_repository.dart';
 import '../../data/repositories/session.dart';
 import '../../data/repositories/shift_repository.dart';
-import '../catalog/add_product_screen.dart';
+import '../catalog/add_variant_screen.dart';
 import '../register/open_register_card.dart';
 import '../sales/refund_screen.dart';
 import '../shell/app_shell.dart';
@@ -100,9 +100,9 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       context,
       title: 'No product for "$code"',
       message: 'Nothing matches this barcode or code on this till. Add it now with a manager PIN?',
-      confirmLabel: 'Add product',
+      confirmLabel: "Add Vt's.",
     );
-    if (add && mounted) await openAddProductScreen(context, ref, initialBarcode: code);
+    if (add && mounted) await openAddVariantScreen(context, ref, initialBarcode: code);
   }
 
   /// Exact barcode/SKU match. If several local twins share the code, prefer
@@ -191,13 +191,17 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   bool _matches(Product p, String q) {
     if (q.isEmpty) return true;
     final s = q.toLowerCase();
+    final parentSku = p.catalogItemSku?.toLowerCase();
     // Full numeric barcodes must match exactly — substring contains() let stale
     // local twins (and unrelated SKUs) appear beside the real product.
     if (looksLikeBarcode(q)) {
-      return p.sku.toLowerCase() == s || p.barcodes.any((b) => b.toLowerCase() == s);
+      return p.sku.toLowerCase() == s ||
+          (parentSku != null && parentSku == s) ||
+          p.barcodes.any((b) => b.toLowerCase() == s);
     }
     return p.name.toLowerCase().contains(s) ||
         p.sku.toLowerCase().contains(s) ||
+        (parentSku?.contains(s) ?? false) ||
         (p.variantName?.toLowerCase().contains(s) ?? false) ||
         (p.brand?.toLowerCase().contains(s) ?? false) ||
         p.barcodes.any((b) => b.toLowerCase().contains(s));
@@ -263,8 +267,29 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     if (_query.isNotEmpty) {
       tiles = _tilesForQuery(filtered, _query);
     } else {
-      final seen = <String>{};
-      tiles = [for (final p in filtered) if (seen.add(p.catalogItemId)) p]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      // One representative variant per parent: prefer in-stock, then cheapest, then SKU.
+      final best = <String, Product>{};
+      for (final p in filtered) {
+        final prev = best[p.catalogItemId];
+        if (prev == null) {
+          best[p.catalogItemId] = p;
+          continue;
+        }
+        final prevStock = prev.stock;
+        final nextStock = p.stock;
+        final prevIn = prevStock == null || prevStock > 0;
+        final nextIn = nextStock == null || nextStock > 0;
+        if (nextIn && !prevIn) {
+          best[p.catalogItemId] = p;
+        } else if (nextIn == prevIn &&
+            (p.effectivePricePence < prev.effectivePricePence ||
+                (p.effectivePricePence == prev.effectivePricePence &&
+                    p.sku.toLowerCase().compareTo(prev.sku.toLowerCase()) < 0))) {
+          best[p.catalogItemId] = p;
+        }
+      }
+      tiles = best.values.toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     }
 
     final products = Column(
@@ -372,7 +397,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                           const SizedBox(height: 8),
                           Text(
                             ref.watch(onlineProvider)
-                                ? 'Download the organisation catalogue, or use Options → Add product (manager) to create one.'
+                                ? "Download the organisation catalogue, or use Add Prod. / Add Vt's. (manager) to create one."
                                 : 'Reconnect, then tap Download products. Sales can still use items already on the device.',
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),

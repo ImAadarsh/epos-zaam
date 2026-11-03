@@ -69,10 +69,13 @@ class _RegisterSelectScreenState extends ConsumerState<RegisterSelectScreen> {
       builder: (_) => _RegisterDialog(warehouses: ref.read(bootstrapProvider).warehouses, register: r),
     );
     if (result == null || !mounted) return;
+    final api = ref.read(apiClientProvider);
+    final catalogNotifier = ref.read(catalogProvider.notifier);
+    final activeRegisterId = ref.read(sessionProvider).registerId;
     try {
-      await ref.read(apiClientProvider).patch('/api/pos/registers/${r.id}', data: {'name': result.name, 'warehouseId': result.warehouseId});
+      await api.patch('/api/pos/registers/${r.id}', data: {'name': result.name, 'warehouseId': result.warehouseId});
       await _refresh();
-      if (r.id == ref.read(sessionProvider).registerId) await ref.read(catalogProvider.notifier).sync(full: true);
+      if (r.id == activeRegisterId) await catalogNotifier.sync(full: true);
       if (mounted) showMessage(context, '${result.name} updated.');
     } catch (e) {
       if (mounted) showMessage(context, errorMessage(e), error: true);
@@ -101,6 +104,11 @@ class _RegisterSelectScreenState extends ConsumerState<RegisterSelectScreen> {
 
   Future<void> _select(String id) async {
     final session = ref.read(sessionProvider);
+    // Capture notifiers before selectRegister: RootGate swaps this screen away
+    // once registerId is set, so widget `ref` is unsafe after that await.
+    final shiftNotifier = ref.read(shiftProvider.notifier);
+    final catalogNotifier = ref.read(catalogProvider.notifier);
+    final catalogLoaded = ref.read(catalogProvider).loaded;
     if (widget.changing && id != session.registerId) {
       final shift = ref.read(shiftProvider);
       final pending = ref.read(outboxProvider).entries.where((e) => e.type != OutboxType.clock).length;
@@ -112,10 +120,16 @@ class _RegisterSelectScreenState extends ConsumerState<RegisterSelectScreen> {
         if (!ok) return;
       }
       if (pending > 0 && mounted) showMessage(context, '$pending change(s) still syncing; they will be sent in the background.');
-      await ref.read(shiftProvider.notifier).clearLocal();
+      await shiftNotifier.clearLocal();
     }
+    final switched = id != session.registerId;
     await ref.read(sessionProvider.notifier).selectRegister(id);
-    await ref.read(shiftProvider.notifier).reconcile();
+    // Stock is per register warehouse — always reload so we don't keep zeros
+    // (or another store's quantities) from the previous till.
+    if (switched || !catalogLoaded) {
+      await catalogNotifier.sync(full: true);
+    }
+    await shiftNotifier.reconcile();
     if (widget.changing && mounted) Navigator.of(context).pop();
   }
 

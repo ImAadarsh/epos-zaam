@@ -4,53 +4,36 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../../core/network/api_exception.dart';
-import '../../core/scanner/camera_scanner.dart';
-import '../../core/security/permissions.dart';
 import '../../core/sync/connectivity.dart';
-import '../../core/theme/app_theme.dart';
-import '../../core/utils/money.dart';
 import '../../core/widgets/dialogs.dart';
-import '../../core/widgets/manager_override.dart';
 import '../../data/models/org.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../shell/app_shell.dart';
 import '../shell/status_bar.dart';
+import 'catalog_form_shared.dart';
+
+export 'catalog_form_shared.dart' show ensureCanAddProduct;
 
 const _currencyOptions = ['GBP', 'EUR', 'USD', 'AED', 'AUD', 'CAD', 'CHF', 'INR', 'NZD', 'SAR', 'ZAR'];
 
-/// Manager + online gate shared by the sidebar tab and Options → Add product.
-Future<bool> ensureCanAddProduct(BuildContext context, WidgetRef ref) async {
-  if (!await requirePermission(context, ref, Perm.createCatalogProduct) || !context.mounted) return false;
-  if (!ref.read(onlineProvider)) {
-    showMessage(context, 'Adding a product needs an online connection.', error: true);
-    return false;
-  }
-  return true;
-}
-
-/// Opens the Add Product page after a manager gate. Returns true if the page was shown.
-Future<bool> openAddProductScreen(BuildContext context, WidgetRef ref, {String? initialBarcode}) async {
+/// Opens Add Prod. after a manager gate. Returns true if the page was shown.
+Future<bool> openAddProductScreen(BuildContext context, WidgetRef ref) async {
   if (!await ensureCanAddProduct(context, ref) || !context.mounted) return false;
   await Navigator.of(context).push(
-    MaterialPageRoute(builder: (_) => AddProductScreen(initialBarcode: initialBarcode)),
+    MaterialPageRoute(builder: (_) => const AddProductScreen()),
   );
   return true;
 }
 
-/// Full-page form to create a catalogue product into inventory from the till.
-/// Field set mirrors ERP Catalog Items → Add Item (create).
+/// Create a catalogue product (`catalog_items` only). Variants → Add Vt's.
 class AddProductScreen extends ConsumerStatefulWidget {
-  const AddProductScreen({super.key, this.embedded = false, this.initialBarcode});
+  const AddProductScreen({super.key, this.embedded = false});
 
   /// True when shown as a shell tab (no back button; status actions in the app bar).
   final bool embedded;
-
-  /// Prefill barcode when opened from an unknown scan on Sell.
-  final String? initialBarcode;
 
   @override
   ConsumerState<AddProductScreen> createState() => _AddProductScreenState();
@@ -59,10 +42,6 @@ class AddProductScreen extends ConsumerStatefulWidget {
 class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
-  final _price = TextEditingController();
-  final _cost = TextEditingController();
-  final _qty = TextEditingController(text: '0');
-  final _barcode = TextEditingController();
   final _sku = TextEditingController();
   final _category = TextEditingController();
   final _subCategory = TextEditingController();
@@ -71,37 +50,24 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   final _uom = TextEditingController(text: 'each');
   final _description = TextEditingController();
   final _remarks = TextEditingController();
-  final _reorderLevel = TextEditingController();
-  final _reorderQty = TextEditingController();
-  final _binCode = TextEditingController();
-  final _lotNumber = TextEditingController();
-  final _supplierName = TextEditingController();
   final _supplierSku = TextEditingController();
   final _leadTime = TextEditingController();
+  final _hsCode = TextEditingController();
+  final _country = TextEditingController();
 
   final _nameFocus = FocusNode();
-  final _priceFocus = FocusNode();
-  final _qtyFocus = FocusNode();
 
   String? _taxCodeId;
-  String? _warehouseId;
   String _status = 'active';
   String _currency = 'GBP';
-  DateTime? _expiryDate;
-  final List<_AttrRow> _attributes = [];
 
   late final TaxCodeInfo _defaultTax;
-  late final String? _defaultWarehouseId;
-  late final String _defaultWarehouseLabel;
   late final String _defaultCategory;
   late final String _defaultUom;
   late final String _defaultStatus;
   late final String _defaultCurrency;
-  late final String _defaultPriceListLabel;
 
   String? _nameError;
-  String? _priceError;
-  String? _qtyError;
   String? _formError;
   bool _saving = false;
   bool _defaultsReady = false;
@@ -126,33 +92,15 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   @override
   void initState() {
     super.initState();
-    final code = widget.initialBarcode?.trim();
-    if (code != null && code.isNotEmpty) _barcode.text = code;
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapDefaults());
   }
 
   Future<void> _bootstrapDefaults() async {
     final boot = ref.read(bootstrapProvider);
-    final register = ref.read(currentRegisterProvider);
     final catalog = ref.read(catalogProvider);
 
     _defaultTax = pickOrgOrUkVat(boot.taxCodes);
     _taxCodeId = _defaultTax.id.isEmpty ? null : _defaultTax.id;
-
-    final registerWh = register?.warehouseId;
-    final registerWhName = register?.warehouseName;
-    if (registerWh != null && registerWh.isNotEmpty) {
-      _defaultWarehouseId = registerWh;
-      _defaultWarehouseLabel = registerWhName?.trim().isNotEmpty == true ? registerWhName!.trim() : 'Register warehouse';
-    } else if (boot.warehouses.isNotEmpty) {
-      final w = boot.warehouses.first;
-      _defaultWarehouseId = w.id;
-      _defaultWarehouseLabel = w.name;
-    } else {
-      _defaultWarehouseId = null;
-      _defaultWarehouseLabel = 'No warehouse set';
-    }
-    _warehouseId = _defaultWarehouseId;
 
     await _reloadClassifications(silent: true);
 
@@ -182,10 +130,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     _status = _defaultStatus;
     _defaultCurrency = 'GBP';
     _currency = _defaultCurrency;
-
-    _defaultPriceListLabel = register?.priceListId != null && register!.priceListId!.isNotEmpty
-        ? 'Register price list'
-        : 'Catalogue sell price';
 
     if (!mounted) return;
     setState(() => _defaultsReady = true);
@@ -230,10 +174,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   @override
   void dispose() {
     _name.dispose();
-    _price.dispose();
-    _cost.dispose();
-    _qty.dispose();
-    _barcode.dispose();
     _sku.dispose();
     _category.dispose();
     _subCategory.dispose();
@@ -242,24 +182,14 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     _uom.dispose();
     _description.dispose();
     _remarks.dispose();
-    _reorderLevel.dispose();
-    _reorderQty.dispose();
-    _binCode.dispose();
-    _lotNumber.dispose();
-    _supplierName.dispose();
     _supplierSku.dispose();
     _leadTime.dispose();
-    for (final a in _attributes) {
-      a.key.dispose();
-      a.value.dispose();
-    }
+    _hsCode.dispose();
+    _country.dispose();
     _nameFocus.dispose();
-    _priceFocus.dispose();
-    _qtyFocus.dispose();
     super.dispose();
   }
 
-  bool get _warehouseIsDefault => _warehouseId == _defaultWarehouseId;
   bool get _taxIsDefault {
     final defId = _defaultTax.id.isEmpty ? null : _defaultTax.id;
     return _taxCodeId == defId;
@@ -280,36 +210,11 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     return boot.taxCodes.where((t) => t.id == _taxCodeId).firstOrNull ?? _defaultTax;
   }
 
-  String get _warehouseLabel {
-    final boot = ref.read(bootstrapProvider);
-    final hit = boot.warehouses.where((w) => w.id == _warehouseId).firstOrNull;
-    if (hit != null) return hit.name;
-    if (_warehouseId == _defaultWarehouseId) return _defaultWarehouseLabel;
-    return 'Stock location';
-  }
-
   String get _statusLabel => switch (_status) {
         'inactive' => 'Hidden from Sell',
         'discontinued' => 'Discontinued',
         _ => 'On sale',
       };
-
-  Future<void> _pickWarehouse() async {
-    final boot = ref.read(bootstrapProvider);
-    if (boot.warehouses.isEmpty) {
-      showMessage(context, 'No stock locations are set up for this organisation.', error: true);
-      return;
-    }
-    final choice = await pickOption<String>(
-      context,
-      title: 'Stock location',
-      options: [
-        for (final w in boot.warehouses) (w.id, w.name + (w.id == _defaultWarehouseId ? ' · Default' : '')),
-      ],
-    );
-    if (choice == null || !mounted) return;
-    setState(() => _warehouseId = choice);
-  }
 
   Future<void> _pickTax() async {
     final boot = ref.read(bootstrapProvider);
@@ -326,8 +231,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       context,
       title: 'VAT / tax',
       options: [
-        for (final t in codes)
-          (t.id, '${t.name} (${t.percentLabel})${t.isDefault ? ' · Default' : ''}'),
+        for (final t in codes) (t.id, '${t.name} (${t.percentLabel})${t.isDefault ? ' · Default' : ''}'),
       ],
     );
     if (choice == null || !mounted) return;
@@ -401,7 +305,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         controller: _subCategory,
         currentId: _subCategoryId,
         setId: (id) => _subCategoryId = id,
-        emptyLabel: 'None',
       );
 
   Future<void> _pickBrand() => _pickFromClassifications(
@@ -410,7 +313,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         controller: _brand,
         currentId: _brandId,
         setId: (id) => _brandId = id,
-        emptyLabel: 'None',
       );
 
   Future<void> _pickPackSize() => _pickFromClassifications(
@@ -419,7 +321,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         controller: _packSize,
         currentId: _packSizeId,
         setId: (id) => _packSizeId = id,
-        emptyLabel: 'None',
       );
 
   Future<void> _pickUom() => _pickFromClassifications(
@@ -446,12 +347,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     setState(() => _status = choice);
   }
 
-  Future<void> _scanBarcode() async {
-    final code = await scanWithCamera(context, title: 'Scan product barcode');
-    if (code == null || !mounted) return;
-    setState(() => _barcode.text = code.trim());
-  }
-
   Future<void> _pickCurrency() async {
     final choice = await pickOption<String>(
       context,
@@ -464,46 +359,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     setState(() => _currency = choice);
   }
 
-  Future<void> _pickExpiry() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _expiryDate ?? now,
-      firstDate: DateTime(now.year - 1),
-      lastDate: DateTime(now.year + 20),
-    );
-    if (picked == null || !mounted) return;
-    setState(() => _expiryDate = picked);
-  }
-
-  void _addAttribute() {
-    setState(() => _attributes.add(_AttrRow()));
-  }
-
-  void _removeAttribute(int i) {
-    setState(() {
-      final row = _attributes.removeAt(i);
-      row.key.dispose();
-      row.value.dispose();
-    });
-  }
-
-  Map<String, dynamic>? _collectAttributes() {
-    final map = <String, dynamic>{};
-    for (final a in _attributes) {
-      final k = a.key.text.trim();
-      if (k.isEmpty) continue;
-      map[k] = a.value.text.trim();
-    }
-    return map.isEmpty ? null : map;
-  }
-
-  num? _optionalNumber(TextEditingController c) {
-    final t = c.text.trim();
-    if (t.isEmpty) return null;
-    return num.tryParse(t);
-  }
-
   int? _optionalInt(TextEditingController c) {
     final t = c.text.trim();
     if (t.isEmpty) return null;
@@ -512,88 +367,21 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
 
   bool _validate() {
     String? nameErr;
-    String? priceErr;
-    String? qtyErr;
     final name = _name.text.trim();
     if (name.isEmpty) nameErr = 'Enter a product name';
-    final price = parsePence(_price.text);
-    if (price == null) {
-      priceErr = 'Enter a sell price, e.g. 12.50';
-    } else if (price < 0) {
-      priceErr = 'Sell price cannot be negative';
-    }
-    if (_cost.text.trim().isNotEmpty) {
-      final cost = parsePence(_cost.text);
-      if (cost == null || cost < 0) {
-        setState(() {
-          _nameError = nameErr;
-          _priceError = 'Check cost price (e.g. 4.50)';
-          _qtyError = null;
-          _formError = null;
-        });
-        return false;
-      }
-    }
-    final qty = int.tryParse(_qty.text.trim());
-    if (qty == null) {
-      qtyErr = 'Enter a whole number for stock';
-    } else if (qty < 0) {
-      qtyErr = 'Stock cannot be negative';
-    }
-    final reorder = _optionalNumber(_reorderLevel);
-    if (_reorderLevel.text.trim().isNotEmpty && (reorder == null || reorder < 0)) {
-      setState(() {
-        _formError = 'Reorder level must be a number zero or greater.';
-        _nameError = nameErr;
-        _priceError = priceErr;
-        _qtyError = qtyErr;
-      });
-      return false;
-    }
-    final reorderQ = _optionalNumber(_reorderQty);
-    if (_reorderQty.text.trim().isNotEmpty && (reorderQ == null || reorderQ < 0)) {
-      setState(() {
-        _formError = 'Reorder quantity must be a number zero or greater.';
-        _nameError = nameErr;
-        _priceError = priceErr;
-        _qtyError = qtyErr;
-      });
-      return false;
-    }
     if (_leadTime.text.trim().isNotEmpty && _optionalInt(_leadTime) == null) {
       setState(() {
         _formError = 'Lead time must be a whole number of days.';
         _nameError = nameErr;
-        _priceError = priceErr;
-        _qtyError = qtyErr;
-      });
-      return false;
-    }
-    if (_warehouseId == null || _warehouseId!.isEmpty) {
-      setState(() {
-        _nameError = nameErr;
-        _priceError = priceErr;
-        _qtyError = qtyErr;
-        _formError = 'This register has no stock location. Set one under Options → Change Register.';
       });
       return false;
     }
     setState(() {
       _nameError = nameErr;
-      _priceError = priceErr;
-      _qtyError = qtyErr;
       _formError = null;
     });
     if (nameErr != null) {
       _nameFocus.requestFocus();
-      return false;
-    }
-    if (priceErr != null) {
-      _priceFocus.requestFocus();
-      return false;
-    }
-    if (qtyErr != null) {
-      _qtyFocus.requestFocus();
       return false;
     }
     return true;
@@ -614,13 +402,9 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     });
 
     try {
-      final costPence = _cost.text.trim().isEmpty ? null : parsePence(_cost.text);
-      final product = await ref.read(catalogProvider.notifier).createProduct(
+      final item = await ref.read(catalogProvider.notifier).createCatalogItem(
             name: _name.text.trim(),
-            sellPricePence: parsePence(_price.text)!,
-            quantity: int.parse(_qty.text.trim()),
             sku: _sku.text.trim().isEmpty ? null : _sku.text.trim(),
-            barcode: _barcode.text.trim().isEmpty ? null : _barcode.text.trim(),
             categoryId: _categoryId,
             category: _category.text.trim().isEmpty ? null : _category.text.trim(),
             subCategoryId: _subCategoryId,
@@ -629,38 +413,35 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
             brand: _brand.text.trim().isEmpty ? null : _brand.text.trim(),
             packSizeId: _packSizeId,
             packSize: _packSize.text.trim().isEmpty ? null : _packSize.text.trim(),
-            costPricePence: costPence,
             currency: _currency,
             taxCodeId: _taxCodeId,
             uomId: _uomId,
             uom: _uom.text.trim().isEmpty ? _defaultUom : _uom.text.trim(),
             status: _status,
-            warehouseId: _warehouseId,
             description: _description.text.trim().isEmpty ? null : _description.text.trim(),
             remarks: _remarks.text.trim().isEmpty ? null : _remarks.text.trim(),
-            reorderLevel: _optionalNumber(_reorderLevel),
-            reorderQuantity: _optionalNumber(_reorderQty),
-            binCode: _binCode.text.trim().isEmpty ? null : _binCode.text.trim(),
-            lotNumber: _lotNumber.text.trim().isEmpty ? null : _lotNumber.text.trim(),
-            expiryDate: _expiryDate == null ? null : DateFormat('yyyy-MM-dd').format(_expiryDate!),
-            supplierName: _supplierName.text.trim().isEmpty ? null : _supplierName.text.trim(),
             supplierSku: _supplierSku.text.trim().isEmpty ? null : _supplierSku.text.trim(),
             leadTimeDays: _optionalInt(_leadTime),
-            attributes: _collectAttributes(),
+            hsCode: _hsCode.text.trim().isEmpty ? null : _hsCode.text.trim(),
+            countryOfOrigin: _country.text.trim().isEmpty ? null : _country.text.trim().toUpperCase(),
           );
       if (!mounted) return;
-      showMessage(context, '${product.displayName} added to inventory.');
+      final displayName = '${item['name'] ?? _name.text.trim()}';
+      showMessage(context, '$displayName saved. Add a variant under Add Vt\'s. to sell it.');
       final next = await showDialog<_AfterSave>(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           title: const Text('Product saved'),
           content: Text(
-            '${product.displayName} is in the catalogue at ${formatPence(product.effectivePricePence)}'
-            '${product.stock != null ? ' · ${product.stock} in stock' : ''}.',
+            '$displayName is in the catalogue. Add sell price, barcode and stock under Add Vt\'s.',
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, _AfterSave.addAnother), child: const Text('Add another')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, _AfterSave.addVariant),
+              child: const Text('Add variant'),
+            ),
             FilledButton(onPressed: () => Navigator.pop(ctx, _AfterSave.backToSell), child: const Text('Back to Sell')),
           ],
         ),
@@ -669,6 +450,9 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       if (next == _AfterSave.addAnother) {
         _resetForAnother();
         unawaited(_reloadClassifications(silent: true));
+      } else if (next == _AfterSave.addVariant) {
+        if (!widget.embedded) Navigator.of(context).pop();
+        ref.read(shellTabProvider.notifier).go(AppShell.addVariantTab);
       } else {
         if (!widget.embedded) Navigator.of(context).pop();
         ref.read(shellTabProvider.notifier).go(0);
@@ -678,9 +462,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       final msg = errorMessage(e);
       setState(() {
         _saving = false;
-        if (msg.toLowerCase().contains('barcode')) {
-          _formError = msg;
-        } else if (msg.toLowerCase().contains('sku')) {
+        if (msg.toLowerCase().contains('sku')) {
           _formError = msg;
         } else if (e is ApiException && e.statusCode == 403) {
           _formError = 'Only a till manager can add products. Ask a manager to enter their PIN, then try again.';
@@ -695,29 +477,16 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
 
   void _resetForAnother() {
     _name.clear();
-    _price.clear();
-    _cost.clear();
-    _qty.text = '0';
-    _barcode.clear();
     _sku.clear();
     _description.clear();
     _remarks.clear();
     _subCategory.clear();
     _brand.clear();
     _packSize.clear();
-    _reorderLevel.clear();
-    _reorderQty.clear();
-    _binCode.clear();
-    _lotNumber.clear();
-    _supplierName.clear();
     _supplierSku.clear();
     _leadTime.clear();
-    _expiryDate = null;
-    for (final a in _attributes) {
-      a.key.dispose();
-      a.value.dispose();
-    }
-    _attributes.clear();
+    _hsCode.clear();
+    _country.clear();
     _category.text = _defaultCategory;
     final catMatch = (_classifications['category'] ?? const []).where((o) => o.name == _defaultCategory).toList();
     _categoryId = catMatch.isNotEmpty ? catMatch.first.id : null;
@@ -728,12 +497,9 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     final uomMatch = (_classifications['uom'] ?? const []).where((o) => o.name == _defaultUom).toList();
     _uomId = uomMatch.isNotEmpty ? uomMatch.first.id : null;
     _taxCodeId = _defaultTax.id.isEmpty ? null : _defaultTax.id;
-    _warehouseId = _defaultWarehouseId;
     _status = _defaultStatus;
     _currency = _defaultCurrency;
     _nameError = null;
-    _priceError = null;
-    _qtyError = null;
     _formError = null;
     _saving = false;
     setState(() {});
@@ -749,7 +515,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: !widget.embedded,
-        title: const Text('Add product'),
+        title: const Text('Add Prod.'),
         actions: [
           if (!online)
             Padding(
@@ -772,124 +538,88 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
                     children: [
                       Text(
-                        register == null ? 'New inventory item' : 'New inventory item · ${register.name}',
+                        register == null ? 'New catalogue product' : 'New catalogue product · ${register.name}',
                         style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Name, price and stock are enough for most items. Tap a chip above to change warehouse, VAT or category.',
+                        'Creates the parent product only. Use Add Vt\'s. for SKU, barcode, cost, sell price and stock.',
                         style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                       ),
                       const SizedBox(height: 16),
-                      _DefaultsStrip(
+                      CatalogDefaultsStrip(
                         chips: [
-                          _DefaultChip(
-                            label: 'Warehouse $_warehouseLabel',
-                            isDefault: _warehouseIsDefault,
-                            onTap: _pickWarehouse,
-                          ),
-                          _DefaultChip(
+                          CatalogDefaultChip(
                             label: 'Tax ${_selectedTax.percentLabel}',
                             isDefault: _taxIsDefault,
                             onTap: _pickTax,
                           ),
-                          _DefaultChip(
+                          CatalogDefaultChip(
                             label: _category.text.trim().isEmpty ? 'Category —' : 'Category ${_category.text.trim()}',
                             isDefault: _categoryIsDefault,
                             onTap: _pickCategory,
                           ),
-                          _DefaultChip(
+                          CatalogDefaultChip(
                             label: 'Sold as ${_uom.text.trim().isEmpty ? _defaultUom : _uom.text.trim()}',
                             isDefault: _uomIsDefault,
                             onTap: _pickUom,
                           ),
-                          _DefaultChip(
+                          CatalogDefaultChip(
                             label: _statusLabel,
                             isDefault: _statusIsDefault,
                             onTap: _pickStatus,
                           ),
-                          _DefaultChip(
+                          CatalogDefaultChip(
                             label: 'Currency $_currency',
                             isDefault: _currencyIsDefault,
                             onTap: _pickCurrency,
-                          ),
-                          _DefaultChip(
-                            label: _defaultPriceListLabel,
-                            isDefault: true,
-                            onTap: null,
                           ),
                         ],
                       ),
                       const SizedBox(height: 20),
                       if (_formError != null) ...[
-                        _ErrorBanner(message: _formError!),
+                        CatalogErrorBanner(message: _formError!),
                         const SizedBox(height: 16),
                       ],
                       if (!online) ...[
-                        _ErrorBanner(message: 'You are offline. Reconnect to save — your entries stay on this form.'),
+                        const CatalogErrorBanner(message: 'You are offline. Reconnect to save — your entries stay on this form.'),
                         const SizedBox(height: 16),
                       ],
-
-                      _SectionTitle(title: 'Identity'),
+                      const CatalogSectionTitle(title: 'Identity'),
                       TextFormField(
                         controller: _name,
                         focusNode: _nameFocus,
                         textInputAction: TextInputAction.next,
                         textCapitalization: TextCapitalization.words,
                         decoration: InputDecoration(
-                          labelText: 'Product name',
+                          label: catalogRequiredLabel('Product name'),
                           errorText: _nameError,
-                          hintText: 'Name on Sell and receipts',
+                          hintText: 'Name on catalogue and receipts',
                         ),
                         onChanged: (_) {
                           if (_nameError != null) setState(() => _nameError = null);
                         },
                       ),
                       const SizedBox(height: 12),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _sku,
-                              textInputAction: TextInputAction.next,
-                              decoration: const InputDecoration(
-                                labelText: 'Item code',
-                                hintText: 'Leave blank to auto-create',
-                                helperText: 'Optional on the till',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _barcode,
-                              textInputAction: TextInputAction.next,
-                              decoration: InputDecoration(
-                                labelText: 'Barcode',
-                                hintText: 'Scan or type',
-                                prefixIcon: const Icon(Icons.qr_code_2_outlined),
-                                suffixIcon: IconButton(
-                                  tooltip: 'Scan with camera',
-                                  onPressed: _scanBarcode,
-                                  icon: const Icon(Icons.qr_code_scanner),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                      TextFormField(
+                        controller: _sku,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Product SKU',
+                          hintText: 'Leave blank to auto-create',
+                          helperText: 'Base product code — sellable SKUs live on variants',
+                        ),
                       ),
-
                       const SizedBox(height: 22),
-                      _SectionTitle(title: 'Category & unit'),
+                      const CatalogSectionTitle(title: 'Category & unit'),
                       if (_classificationsHint != null ||
                           _classificationsFromProducts ||
                           (_classifications['category'] ?? const []).isEmpty) ...[
-                        _HintBanner(
+                        CatalogHintBanner(
                           message: _classificationsHint ??
                               (_classificationsFromProducts
-                                  ? 'Using categories from products already on this till. An admin can save them in ERP → Catalog → Classifications (Manage Classifications) → Import from products.'
-                                  : 'No categories yet. In ERP open Catalog → Classifications (Manage Classifications), add values or Import from products, then tap Refresh.'),
+                                  ? 'Using categories from products already on this till. An admin can save them in ERP → Catalog → Classifications → Import from products.'
+                                  : 'No categories yet. In ERP open Catalog → Classifications, add values or Import from products, then tap Refresh.'),
                           actionLabel: _loadingClassifications ? 'Refreshing…' : 'Refresh',
                           onAction: _loadingClassifications ? null : () => _reloadClassifications(),
                         ),
@@ -953,7 +683,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                           Expanded(
                             child: ListTile(
                               contentPadding: EdgeInsets.zero,
-                              title: const Text('Sell status'),
+                              title: const Text('Status'),
                               subtitle: Text(_statusLabel),
                               trailing: const Icon(Icons.expand_more),
                               onTap: _pickStatus,
@@ -961,47 +691,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                           ),
                         ],
                       ),
-
-                      const SizedBox(height: 12),
-                      _SectionTitle(title: 'Price'),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _price,
-                              focusNode: _priceFocus,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-                              textInputAction: TextInputAction.next,
-                              decoration: InputDecoration(
-                                labelText: 'Sell price',
-                                prefixText: '$_currency ',
-                                errorText: _priceError,
-                                hintText: '0.00',
-                              ),
-                              onChanged: (_) {
-                                if (_priceError != null) setState(() => _priceError = null);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _cost,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-                              textInputAction: TextInputAction.next,
-                              decoration: InputDecoration(
-                                labelText: 'Cost (optional)',
-                                prefixText: '$_currency ',
-                                hintText: '0.00',
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
                       Row(
                         children: [
                           Expanded(
@@ -1024,42 +713,6 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                           ),
                         ],
                       ),
-
-                      const SizedBox(height: 12),
-                      _SectionTitle(title: 'Stock'),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _qty,
-                              focusNode: _qtyFocus,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                              textInputAction: TextInputAction.next,
-                              decoration: InputDecoration(
-                                labelText: 'Starting stock',
-                                errorText: _qtyError,
-                                helperText: 'How many you have now at $_warehouseLabel',
-                              ),
-                              onChanged: (_) {
-                                if (_qtyError != null) setState(() => _qtyError = null);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: const Text('Stock location'),
-                              subtitle: Text(_warehouseLabel),
-                              trailing: const Icon(Icons.expand_more),
-                              onTap: _pickWarehouse,
-                            ),
-                          ),
-                        ],
-                      ),
-
                       const SizedBox(height: 16),
                       Material(
                         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
@@ -1095,98 +748,10 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: _reorderLevel,
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-                                textInputAction: TextInputAction.next,
-                                decoration: const InputDecoration(
-                                  labelText: 'Reorder when stock hits',
-                                  hintText: 'Optional',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextFormField(
-                                controller: _reorderQty,
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-                                textInputAction: TextInputAction.next,
-                                decoration: const InputDecoration(
-                                  labelText: 'Reorder quantity',
-                                  hintText: 'Optional',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: _binCode,
-                                textInputAction: TextInputAction.next,
-                                decoration: const InputDecoration(labelText: 'Shelf / bin', hintText: 'Optional'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextFormField(
-                                controller: _lotNumber,
-                                textInputAction: TextInputAction.next,
-                                decoration: const InputDecoration(labelText: 'Batch / lot', hintText: 'Optional'),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('Expiry date'),
-                          subtitle: Text(
-                            _expiryDate == null ? 'Not set' : DateFormat.yMMMd().format(_expiryDate!),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_expiryDate != null)
-                                IconButton(
-                                  tooltip: 'Clear',
-                                  onPressed: () => setState(() => _expiryDate = null),
-                                  icon: const Icon(Icons.clear),
-                                ),
-                              const Icon(Icons.calendar_today_outlined),
-                            ],
-                          ),
-                          onTap: _pickExpiry,
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: _supplierName,
-                                textInputAction: TextInputAction.next,
-                                decoration: const InputDecoration(labelText: 'Supplier', hintText: 'Optional'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextFormField(
-                                controller: _supplierSku,
-                                textInputAction: TextInputAction.next,
-                                decoration: const InputDecoration(labelText: 'Supplier code', hintText: 'Optional'),
-                              ),
-                            ),
-                          ],
+                        TextFormField(
+                          controller: _supplierSku,
+                          textInputAction: TextInputAction.next,
+                          decoration: const InputDecoration(labelText: 'Supplier code', hintText: 'Optional'),
                         ),
                         const SizedBox(height: 12),
                         TextFormField(
@@ -1200,6 +765,36 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                           ),
                         ),
                         const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                controller: _hsCode,
+                                textInputAction: TextInputAction.next,
+                                decoration: const InputDecoration(
+                                  labelText: 'HS code',
+                                  hintText: 'Trade code',
+                                  helperText: 'Not a barcode',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextFormField(
+                                controller: _country,
+                                textCapitalization: TextCapitalization.characters,
+                                maxLength: 2,
+                                textInputAction: TextInputAction.next,
+                                decoration: const InputDecoration(
+                                  labelText: 'Country of origin',
+                                  hintText: 'GB',
+                                  counterText: '',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
                         TextFormField(
                           controller: _remarks,
                           maxLines: 2,
@@ -1209,58 +804,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                             hintText: 'Staff only',
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Text('Extra fields', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
-                            const Spacer(),
-                            TextButton.icon(
-                              onPressed: _addAttribute,
-                              icon: const Icon(Icons.add, size: 18),
-                              label: const Text('Add'),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          'Optional pairs such as colour → black.',
-                          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                        ),
-                        const SizedBox(height: 8),
-                        for (var i = 0; i < _attributes.length; i++) ...[
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _attributes[i].key,
-                                  textInputAction: TextInputAction.next,
-                                  decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. colour'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _attributes[i].value,
-                                  textInputAction: TextInputAction.next,
-                                  decoration: const InputDecoration(labelText: 'Value', hintText: 'e.g. black'),
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: 'Remove',
-                                onPressed: () => _removeAttribute(i),
-                                icon: const Icon(Icons.close),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                        ],
-                        const SizedBox(height: 8),
-                        _AdvancedNote(
-                          message:
-                              'Photos and size/colour matrices stay in ERP. Everything else for a simple product is on this screen.',
-                        ),
                       ],
-
                       const SizedBox(height: 24),
                       FilledButton.icon(
                         onPressed: _saving || !online ? null : _save,
@@ -1276,7 +820,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                       if (_saving) ...[
                         const SizedBox(height: 8),
                         Text(
-                          'Creating catalogue item, stock and price…',
+                          'Creating catalogue product…',
                           textAlign: TextAlign.center,
                           style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                         ),
@@ -1290,218 +834,4 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   }
 }
 
-enum _AfterSave { addAnother, backToSell }
-
-class _AttrRow {
-  _AttrRow()
-      : key = TextEditingController(),
-        value = TextEditingController();
-  final TextEditingController key;
-  final TextEditingController value;
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title});
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Text(
-        title,
-        style: theme.textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.2,
-        ),
-      ),
-    );
-  }
-}
-
-class _DefaultsStrip extends StatelessWidget {
-  const _DefaultsStrip({required this.chips});
-  final List<_DefaultChip> chips;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: theme.brightness == Brightness.dark ? ZaamColors.charcoal : const Color(0xFFF5EADA),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ZaamColors.gold.withValues(alpha: 0.35)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Using',
-            style: theme.textTheme.labelLarge?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.primary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(spacing: 8, runSpacing: 8, children: chips),
-        ],
-      ),
-    );
-  }
-}
-
-class _DefaultChip extends StatelessWidget {
-  const _DefaultChip({required this.label, required this.isDefault, this.onTap});
-  final String label;
-  final bool isDefault;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final bg = isDefault
-        ? (theme.brightness == Brightness.dark ? ZaamColors.gold.withValues(alpha: 0.22) : Colors.white)
-        : theme.colorScheme.surfaceContainerHighest;
-    final border = isDefault ? ZaamColors.gold.withValues(alpha: 0.45) : theme.dividerColor;
-    return Material(
-      color: bg,
-      shape: StadiumBorder(side: BorderSide(color: border)),
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const StadiumBorder(),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  label,
-                  style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w500),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: isDefault ? ZaamColors.gold.withValues(alpha: 0.18) : theme.colorScheme.tertiaryContainer.withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  isDefault ? 'Default' : 'Custom',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: isDefault ? theme.colorScheme.primary : theme.colorScheme.onTertiaryContainer,
-                  ),
-                ),
-              ),
-              if (onTap != null) ...[
-                const SizedBox(width: 2),
-                Icon(Icons.expand_more, size: 18, color: theme.colorScheme.onSurfaceVariant),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.errorContainer.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.error_outline, color: theme.colorScheme.error),
-          const SizedBox(width: 10),
-          Expanded(child: Text(message, style: theme.textTheme.bodyMedium)),
-        ],
-      ),
-    );
-  }
-}
-
-class _HintBanner extends StatelessWidget {
-  const _HintBanner({required this.message, required this.actionLabel, this.onAction});
-  final String message;
-  final String actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.info_outline, size: 20, color: theme.colorScheme.onSecondaryContainer),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              message,
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSecondaryContainer),
-            ),
-          ),
-          TextButton(
-            onPressed: onAction,
-            child: Text(actionLabel),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AdvancedNote extends StatelessWidget {
-  const _AdvancedNote({required this.message});
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.dividerColor),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.info_outline, size: 20, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              message,
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+enum _AfterSave { addAnother, addVariant, backToSell }

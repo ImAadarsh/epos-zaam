@@ -50,7 +50,11 @@ class ShellStatusActions extends ConsumerWidget {
       children: [
         if (register != null) ...[
           Tooltip(
-            message: 'Register: ${register.name} · tap to switch, add or remove registers',
+            message: [
+              'Register: ${register.name}',
+              if (register.warehouseName != null) 'Stock: ${register.warehouseName}',
+              'Tap to switch, add or remove registers',
+            ].join(' · '),
             child: InkWell(
               borderRadius: BorderRadius.circular(20),
               onTap: () async {
@@ -63,7 +67,15 @@ class ShellStatusActions extends ConsumerWidget {
                 decoration: BoxDecoration(border: Border.all(color: Theme.of(context).dividerColor), borderRadius: BorderRadius.circular(20)),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   const Icon(Icons.point_of_sale, size: 18),
-                  if (!compact) ...[const SizedBox(width: 6), Text(register.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))],
+                  if (!compact) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      register.warehouseName == null || register.warehouseName!.isEmpty
+                          ? register.name
+                          : '${register.name} · ${register.warehouseName}',
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                  ],
                   const Icon(Icons.arrow_drop_down, size: 18),
                 ]),
               ),

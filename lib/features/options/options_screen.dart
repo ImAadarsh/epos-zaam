@@ -17,6 +17,7 @@ import '../../data/repositories/shift_repository.dart';
 import '../auth/register_select_screen.dart';
 import '../availability/availability_screen.dart';
 import '../catalog/add_product_screen.dart';
+import '../catalog/add_variant_screen.dart';
 import '../display/connect_display_screen.dart';
 import '../register/register_screen.dart';
 import '../sales/previous_sales_screen.dart';
@@ -77,7 +78,8 @@ class OptionsScreen extends ConsumerWidget {
       (Icons.bookmarks_outlined, 'Saved Sales', parked > 0 ? '$parked saved' : null, () => _push(context, const SavedSalesScreen())),
       (Icons.receipt_long_outlined, 'Previous Sales', null, () => _push(context, const PreviousSalesScreen())),
       (Icons.undo, 'Refund Transaction', 'Scan or type the receipt number', () => _push(context, const RefundScreen())),
-      (Icons.add_box_outlined, 'Add product', 'Create a catalogue item with stock and price', () => openAddProductScreen(context, ref)),
+      (Icons.add_box_outlined, 'Add Prod.', 'Create a catalogue product (no sell price yet)', () => openAddProductScreen(context, ref)),
+      (Icons.style_outlined, "Add Vt's.", 'Create a variant with price, barcode and stock', () => openAddVariantScreen(context, ref)),
       (Icons.inventory_2_outlined, 'Manage Availability', 'Mark products and modifiers unavailable', () async {
         if (await requirePermission(context, ref, Perm.manageAvailability) && context.mounted) _push(context, const AvailabilityScreen());
       }),
