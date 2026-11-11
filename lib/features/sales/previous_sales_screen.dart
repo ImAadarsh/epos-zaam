@@ -20,7 +20,7 @@ import 'sale_detail_screen.dart';
 enum _Scope { thisRegister, all }
 
 /// Shell tab index for Previous Sales (must match [AppShell] destinations).
-const _salesTabIndex = 1;
+const _salesTabIndex = AppShell.salesTab;
 
 /// Previous Sales: server history merged with this device's not-yet-synced sales.
 class PreviousSalesScreen extends ConsumerStatefulWidget {

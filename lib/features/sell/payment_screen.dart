@@ -43,15 +43,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   void _showOnDisplay() {
     final totals = ref.read(cartTotalsProvider);
     final org = ref.read(bootstrapProvider).org;
-    final base = DisplayState.fromCart(ref.read(cartProvider), totals, org?.name ?? '');
-    ref.read(customerDisplayProvider).show(DisplayState(
-          mode: 'paying',
-          storeName: base.storeName,
-          lines: base.lines,
-          totalPence: base.totalPence,
-          discountPence: base.discountPence,
-          paidPence: _paid,
-        ));
+    final yt = ref.read(settingsProvider).customerDisplayYoutubeUrl;
+    ref.read(customerDisplayProvider).show(
+          DisplayState.fromCart(ref.read(cartProvider), totals, org?.name ?? '', youtubeUrl: yt).withMode('paying'),
+        );
   }
 
   Future<void> _addPayment(SalePayment p) async {
@@ -302,7 +297,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         if (didPop || _busy) return;
         if (await _confirmLeave() && context.mounted) {
           Navigator.of(context).pop();
-          ref.read(customerDisplayProvider).show(DisplayState.fromCart(ref.read(cartProvider), ref.read(cartTotalsProvider), ref.read(bootstrapProvider).org?.name ?? ''));
+          ref.read(customerDisplayProvider).show(DisplayState.fromCart(
+                ref.read(cartProvider),
+                ref.read(cartTotalsProvider),
+                ref.read(bootstrapProvider).org?.name ?? '',
+                youtubeUrl: ref.read(settingsProvider).customerDisplayYoutubeUrl,
+              ));
         }
       },
       child: Scaffold(

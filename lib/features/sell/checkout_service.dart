@@ -88,8 +88,7 @@ class CheckoutService {
     ref.read(customerDisplayProvider).show(DisplayState(
           mode: 'done',
           storeName: org?.name ?? '',
-          totalPence: sale.totalPence,
-          paidPence: paid + change,
+          youtubeUrl: ref.read(settingsProvider).customerDisplayYoutubeUrl,
           changePence: change,
           message: 'Thank you!',
         ));

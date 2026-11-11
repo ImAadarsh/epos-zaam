@@ -18,20 +18,32 @@ import '../shell/status_bar.dart';
 import 'catalog_form_shared.dart';
 
 /// Opens Add Vt's. after a manager gate.
-Future<bool> openAddVariantScreen(BuildContext context, WidgetRef ref, {String? initialBarcode}) async {
+Future<bool> openAddVariantScreen(
+  BuildContext context,
+  WidgetRef ref, {
+  String? initialBarcode,
+  CatalogItemRef? initialParent,
+}) async {
   if (!await ensureCanAddProduct(context, ref) || !context.mounted) return false;
   await Navigator.of(context).push(
-    MaterialPageRoute(builder: (_) => AddVariantScreen(initialBarcode: initialBarcode)),
+    MaterialPageRoute(
+      builder: (_) => AddVariantScreen(
+        initialBarcode: initialBarcode,
+        initialParent: initialParent,
+      ),
+    ),
   );
   return true;
 }
 
 /// Create a sellable variant under an existing catalogue product.
 class AddVariantScreen extends ConsumerStatefulWidget {
-  const AddVariantScreen({super.key, this.embedded = false, this.initialBarcode});
+  const AddVariantScreen({super.key, this.embedded = false, this.initialBarcode, this.initialParent});
 
   final bool embedded;
   final String? initialBarcode;
+  /// Pre-select parent when opened right after Add Prod. (e.g. test09).
+  final CatalogItemRef? initialParent;
 
   @override
   ConsumerState<AddVariantScreen> createState() => _AddVariantScreenState();
@@ -95,6 +107,11 @@ class _AddVariantScreenState extends ConsumerState<AddVariantScreen> {
     super.initState();
     final code = widget.initialBarcode?.trim();
     if (code != null && code.isNotEmpty) _barcode.text = code;
+    final preset = widget.initialParent;
+    if (preset != null) {
+      _parent = preset;
+      _parentSearch.text = preset.label;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapDefaults());
   }
 
@@ -120,8 +137,18 @@ class _AddVariantScreenState extends ConsumerState<AddVariantScreen> {
     _currency = 'GBP';
     _autoGenerateBarcode = _barcode.text.trim().isEmpty;
 
-    await _searchParents('');
+    final seedQ = widget.initialParent?.name.trim();
+    await _searchParents(seedQ != null && seedQ.isNotEmpty ? seedQ : '');
     if (!mounted) return;
+    // Keep preset parent even if search lags; merge into hits so the chip stays consistent.
+    final preset = widget.initialParent;
+    if (preset != null && _parent == null) {
+      _parent = preset;
+      _parentSearch.text = preset.label;
+    }
+    if (preset != null && !_parentHits.any((h) => h.id == preset.id)) {
+      _parentHits = [preset, ..._parentHits];
+    }
     setState(() => _defaultsReady = true);
     _skuFocus.requestFocus();
   }
@@ -131,14 +158,24 @@ class _AddVariantScreenState extends ConsumerState<AddVariantScreen> {
     try {
       final hits = await ref.read(catalogProvider.notifier).searchCatalogItems(q: q.trim().isEmpty ? null : q.trim());
       if (!mounted) return;
+      final preset = widget.initialParent;
+      var next = hits;
+      if (preset != null && q.trim().isEmpty && !hits.any((h) => h.id == preset.id)) {
+        next = [preset, ...hits];
+      } else if (preset != null &&
+          q.trim().isNotEmpty &&
+          preset.name.toLowerCase().contains(q.trim().toLowerCase()) &&
+          !hits.any((h) => h.id == preset.id)) {
+        next = [preset, ...hits];
+      }
       setState(() {
-        _parentHits = hits;
+        _parentHits = next;
         _searchingParents = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _parentHits = const [];
+        _parentHits = widget.initialParent != null ? [widget.initialParent!] : const [];
         _searchingParents = false;
       });
     }

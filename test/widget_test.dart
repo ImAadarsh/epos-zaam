@@ -88,4 +88,31 @@ void main() {
     expect(PosSettings.fromJson({'receiptPrompt': true}).autoPrintReceipts, isTrue);
   });
 
+  test('quantity volume tiers auto-apply cheaper unit price', () {
+    final product = Product(
+      variantId: 'v1',
+      catalogItemId: 'c1',
+      sku: 'SKU',
+      name: 'Bulk tea',
+      pricePence: 500,
+      priceTiers: const [
+        PriceTier(minQuantity: 1, pricePence: 500),
+        PriceTier(minQuantity: 5, pricePence: 400),
+      ],
+      taxRate: 0.2,
+    );
+    expect(product.priceForQuantity(1), 500);
+    expect(product.priceForQuantity(4), 500);
+    expect(product.priceForQuantity(5), 400);
+    expect(product.priceForQuantity(12), 400);
+    final line = CartLine(id: 'a', product: product, quantity: 5);
+    expect(line.unitPence, 400);
+    expect(line.grossPence, 2000);
+  });
+
+  test('customer display YouTube URL persists in settings', () {
+    final s = const PosSettings().copyWith(customerDisplayYoutubeUrl: 'https://youtu.be/dQw4w9WgXcQ');
+    expect(PosSettings.fromJson(s.toJson()).customerDisplayYoutubeUrl, 'https://youtu.be/dQw4w9WgXcQ');
+  });
+
 }

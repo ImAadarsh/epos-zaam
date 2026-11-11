@@ -100,6 +100,57 @@ ReceiptDoc buildRefundReceipt(SaleRecord sale, {required int amountPence, requir
   ], barcode: sale.receiptNumber, openDrawer: method.toLowerCase() == 'cash');
 }
 
+/// Cash paid-out slip for Direct Sale / register payouts.
+ReceiptDoc buildPayoutReceipt({
+  required int amountPence,
+  required DateTime at,
+  String? reason,
+  String? registerName,
+  String? staffName,
+  String? orgName,
+  bool openDrawer = false,
+}) {
+  return ReceiptDoc(
+    rows: [
+      ReceiptRow(orgName ?? 'Zaam', '', ReceiptStyle.large),
+      const ReceiptRow('PAYOUT', '', ReceiptStyle.centerBold),
+      const ReceiptRow('*** PAID OUT ***', '', ReceiptStyle.centerBold),
+      const ReceiptRow('', '', ReceiptStyle.gap),
+      ReceiptRow('Date', _date.format(at)),
+      if (registerName != null && registerName.isNotEmpty) ReceiptRow('Till', registerName),
+      if (staffName != null && staffName.isNotEmpty) ReceiptRow('User', staffName),
+      const ReceiptRow('', '', ReceiptStyle.divider),
+      ReceiptRow('Amount', formatPence(amountPence), ReceiptStyle.large),
+      if (reason != null && reason.isNotEmpty) ReceiptRow('Reason', reason),
+      const ReceiptRow('', '', ReceiptStyle.gap),
+      const ReceiptRow('Cash removed from drawer', '', ReceiptStyle.center),
+    ],
+    openDrawer: openDrawer,
+  );
+}
+
+/// Early (hourly) sales report — matches classic POS “Hourly Report” layout.
+ReceiptDoc buildHourlyReportReceipt({
+  required List<({String label, int amountPence, double percent})> hours,
+  required int totalPence,
+  String? registerName,
+  String? orgName,
+}) {
+  final rows = <ReceiptRow>[
+    ReceiptRow(orgName ?? 'Zaam', '', ReceiptStyle.large),
+    const ReceiptRow('HOURLY REPORT', '', ReceiptStyle.centerBold),
+    if (registerName != null) ReceiptRow('Register', registerName),
+    ReceiptRow('Printed', _date.format(DateTime.now())),
+    const ReceiptRow('', '', ReceiptStyle.divider),
+    const ReceiptRow('Hours', 'Sale / %', ReceiptStyle.bold),
+    for (final h in hours) ReceiptRow(h.label, '${formatPence(h.amountPence)}  ${h.percent.toStringAsFixed(2)}%'),
+    const ReceiptRow('', '', ReceiptStyle.divider),
+    ReceiptRow('Total of the Day', formatPence(totalPence), ReceiptStyle.bold),
+    const ReceiptRow('100.00%', '', ReceiptStyle.small),
+  ];
+  return ReceiptDoc(rows: rows);
+}
+
 ReceiptDoc buildShiftReportReceipt(ShiftReport r, {String? registerName, OrgInfo? org}) {
   final isZ = r.type.toUpperCase() == 'Z';
   final rows = <ReceiptRow>[

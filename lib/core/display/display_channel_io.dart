@@ -1,11 +1,11 @@
 import 'dart:async';
 
-final _local = StreamController<Map<String, dynamic>>.broadcast();
-
 const bool crossWindowDisplaySupported = false;
 
-void postDisplayMessage(Map<String, dynamic> message) => _local.add(message);
+void postDisplayMessage(Map<String, dynamic> message) {}
 
-Stream<Map<String, dynamic>> displayMessages() => _local.stream;
+Map<String, dynamic>? readStoredDisplayMessage() => null;
 
-void openDisplayWindow() {}
+Stream<Map<String, dynamic>> displayMessages() => const Stream.empty();
+
+void openDisplayWindow({String youtubeUrl = ''}) {}

@@ -106,8 +106,26 @@ class LocalSalesController extends Notifier<List<SaleRecord>> {
 
   SaleRecord? find(String code) {
     final c = code.trim();
+    if (c.isEmpty) return null;
+    final bare = c.toUpperCase().startsWith('POS-') ? c.substring(4) : c;
+    final withPos = c.toUpperCase().startsWith('POS-') ? c : 'POS-$c';
     for (final s in state) {
-      if (s.clientId == c || s.receiptNumber == c || s.orderNumber == c || s.serverId == c || 'POS-${s.receiptNumber}' == c) return s;
+      final keys = {
+        s.clientId,
+        s.receiptNumber,
+        s.orderNumber,
+        s.serverId,
+        if (s.receiptNumber.isNotEmpty) 'POS-${s.receiptNumber}',
+      };
+      if (keys.contains(c) || keys.contains(bare) || keys.contains(withPos)) return s;
+    }
+    return null;
+  }
+
+  /// Most recent non-voided sale on this till (for the Sell-screen Receipt button).
+  SaleRecord? get lastReceiptSale {
+    for (final s in state) {
+      if (s.status != 'voided') return s;
     }
     return null;
   }

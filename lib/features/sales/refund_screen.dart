@@ -68,7 +68,8 @@ class _RefundScreenState extends ConsumerState<RefundScreen> {
       final s = await loadSale(ref, code);
       if (!mounted) return;
       if (s == null) {
-        setState(() => _error = 'No sale found for "$code"');
+        setState(() => _error =
+            'No sale found for "$code". Check the receipt is from this till environment (DEV vs live), has synced, and try M-… or POS-M-….');
       } else {
         final original = s.payments.where((p) => !p.isRefund).map((p) => p.method).firstOrNull;
         setState(() {

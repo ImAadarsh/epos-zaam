@@ -7,6 +7,7 @@ import '../../core/storage/local_db.dart';
 import '../../core/utils/app_log.dart';
 import '../../core/widgets/dialogs.dart';
 import '../../core/widgets/manager_override.dart';
+import '../../data/models/org.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/outbox_repository.dart';
@@ -30,7 +31,7 @@ import '../support/debug_screen.dart';
 import '../support/faq_screen.dart';
 import '../unsynced/unsynced_screen.dart';
 
-/// "Options" menu, mirroring the Goodtill/SumUp POS options list.
+/// "Options" menu — day-to-day retailer actions first; manager-only extras gated.
 class OptionsScreen extends ConsumerWidget {
   const OptionsScreen({super.key});
 
@@ -68,36 +69,45 @@ class OptionsScreen extends ConsumerWidget {
     final outbox = ref.watch(outboxProvider);
     final parked = ref.watch(parkedSalesProvider).length;
     final register = ref.watch(currentRegisterProvider);
+    final staff = ref.watch(currentStaffProvider);
+    final isManager = staff != null && staff.posRole.index >= PosRole.manager.index;
 
-    final items = <(IconData, String, String?, VoidCallback)>[
+    // Front-line shortcuts retailers need every day.
+    final retail = <(IconData, String, String?, VoidCallback)>[
       (Icons.lock_clock, 'Close Register', 'Start close register, X-read and Z-read', () => _push(context, const RegisterScreen(standalone: true))),
       (Icons.schedule, 'Staff Clock In/Out', null, () => _push(context, const ClockScreen())),
-      (Icons.settings_outlined, 'Settings', 'Payments, receipts, printer, staff PINs', () async {
-        if (await requirePermission(context, ref, Perm.settings) && context.mounted) _push(context, const SettingsScreen());
-      }),
       (Icons.bookmarks_outlined, 'Saved Sales', parked > 0 ? '$parked saved' : null, () => _push(context, const SavedSalesScreen())),
       (Icons.receipt_long_outlined, 'Previous Sales', null, () => _push(context, const PreviousSalesScreen())),
       (Icons.undo, 'Refund Transaction', 'Scan or type the receipt number', () => _push(context, const RefundScreen())),
-      (Icons.add_box_outlined, 'Add Prod.', 'Create a catalogue product (no sell price yet)', () => openAddProductScreen(context, ref)),
-      (Icons.style_outlined, "Add Vt's.", 'Create a variant with price, barcode and stock', () => openAddVariantScreen(context, ref)),
-      (Icons.inventory_2_outlined, 'Manage Availability', 'Mark products and modifiers unavailable', () async {
-        if (await requirePermission(context, ref, Perm.manageAvailability) && context.mounted) _push(context, const AvailabilityScreen());
-      }),
       (
         Icons.sync_problem_outlined,
         'Check Unsynced Sales',
         outbox.pendingCount == 0 ? 'Everything is synced' : '${outbox.pendingCount} waiting${outbox.failedCount > 0 ? ', ${outbox.failedCount} failed' : ''}',
         () => _push(context, const UnsyncedScreen()),
       ),
+      (Icons.connected_tv, 'Connect Display', 'YouTube marketing on the customer screen', () => _push(context, const ConnectDisplayScreen())),
+      (Icons.help_outline, 'FAQ', null, () => _push(context, const FaqScreen())),
+      (Icons.lock_outline, 'Lock till', 'Switch staff member', () => ref.read(sessionProvider.notifier).lock()),
+    ];
+
+    // Extra / settings — managers only (hidden from cashiers on the Options grid).
+    final manager = <(IconData, String, String?, VoidCallback)>[
+      (Icons.settings_outlined, 'Settings', 'Payments, receipts, printer, customer video, staff PINs', () async {
+        if (await requirePermission(context, ref, Perm.settings) && context.mounted) _push(context, const SettingsScreen());
+      }),
+      (Icons.add_box_outlined, 'Add Prod.', 'Create a catalogue product (no sell price yet)', () => openAddProductScreen(context, ref)),
+      (Icons.style_outlined, "Add Vt's.", 'Create a variant with price, barcode and stock', () => openAddVariantScreen(context, ref)),
+      (Icons.inventory_2_outlined, 'Manage Availability', 'Mark products and modifiers unavailable', () async {
+        if (await requirePermission(context, ref, Perm.manageAvailability) && context.mounted) _push(context, const AvailabilityScreen());
+      }),
       (Icons.point_of_sale, 'Change Register', register == null ? null : 'Active: ${register.name}', () async {
         if (await requirePermission(context, ref, Perm.changeRegister) && context.mounted) _push(context, const RegisterSelectScreen(changing: true));
       }),
-      (Icons.connected_tv, 'Connect Display', 'Customer-facing screen', () => _push(context, const ConnectDisplayScreen())),
       (Icons.bug_report_outlined, 'Send Debug Data', 'Send logs to Zaam support', () => _push(context, const DebugScreen())),
-      (Icons.help_outline, 'FAQ', null, () => _push(context, const FaqScreen())),
-      (Icons.lock_outline, 'Lock till', 'Switch staff member', () => ref.read(sessionProvider.notifier).lock()),
       (Icons.restart_alt, 'Reset App', 'Remove all data from this device', () => _reset(context, ref)),
     ];
+
+    final items = [...retail, if (isManager) ...manager];
 
     return Scaffold(
       appBar: AppBar(automaticallyImplyLeading: false, title: const Text('Options'), actions: const [ShellStatusActions()]),
@@ -106,9 +116,24 @@ class OptionsScreen extends ConsumerWidget {
         return GridView.builder(
           padding: const EdgeInsets.all(16),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: cols, mainAxisExtent: 84, mainAxisSpacing: 10, crossAxisSpacing: 10),
-          itemCount: items.length + 1,
+          itemCount: items.length + (isManager ? 1 : 2),
           itemBuilder: (context, i) {
-            if (i == items.length) {
+            if (!isManager && i == items.length) {
+              return Card(
+                child: ListTile(
+                  leading: Icon(Icons.admin_panel_settings_outlined, color: Theme.of(context).colorScheme.primary),
+                  title: const Text('Manager tools'),
+                  subtitle: const Text('Settings, add product, register — needs manager PIN'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    if (await requirePermission(context, ref, Perm.settings) && context.mounted) {
+                      _push(context, const SettingsScreen());
+                    }
+                  },
+                ),
+              );
+            }
+            if (i >= items.length) {
               return Center(child: Text('Zaam EPOS v${AppConfig.appVersion}', style: Theme.of(context).textTheme.bodySmall));
             }
             final (icon, title, sub, onTap) = items[i];

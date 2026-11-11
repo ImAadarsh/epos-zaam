@@ -5,7 +5,6 @@ import '../../data/repositories/bootstrap_repository.dart';
 import '../security/permissions.dart';
 import '../security/pin.dart';
 import '../utils/app_log.dart';
-import 'dialogs.dart';
 import 'pin_entry.dart';
 
 /// Returns true if the signed-in staff member may do [perm], otherwise asks a
@@ -31,33 +30,42 @@ Future<bool> requirePermission(BuildContext context, WidgetRef ref, Perm perm) a
   if (!context.mounted) return false;
   final ok = await showDialog<bool>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Manager approval'),
-      content: SizedBox(
-        width: 340,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('${perm.label}\nEnter a ${perm.minimumRole.name} PIN to continue.', textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            PinEntry(onSubmit: (pin) async {
-              final verifier = ref.read(pinVerifierProvider);
-              final r = await verifier.verify(pin, among: approvers);
-              final m = r.staff;
-              if (m == null) {
-                if (r.message != null && ctx.mounted) showMessage(ctx, r.message!, error: true);
-                return false;
-              }
-              verifier.rememberOverride(r.staffToken);
-              AppLog.info('${perm.name} approved by ${m.name}');
-              if (ctx.mounted) Navigator.pop(ctx, true);
-              return true;
-            }),
-          ],
+    builder: (ctx) {
+      String? pinError;
+      return StatefulBuilder(
+        builder: (ctx, setModal) => AlertDialog(
+          title: const Text('Manager approval'),
+          content: SizedBox(
+            width: 340,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${perm.label}\nEnter a ${perm.minimumRole.name} PIN to continue.', textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                // Inline PIN error only — never ScaffoldMessenger snackbars (Direct Sale must stay snackbar-free).
+                PinEntry(
+                  error: pinError,
+                  onSubmit: (pin) async {
+                    final verifier = ref.read(pinVerifierProvider);
+                    final r = await verifier.verify(pin, among: approvers);
+                    final m = r.staff;
+                    if (m == null) {
+                      setModal(() => pinError = r.message ?? 'PIN not recognised');
+                      return false;
+                    }
+                    verifier.rememberOverride(r.staffToken);
+                    AppLog.info('${perm.name} approved by ${m.name}');
+                    if (ctx.mounted) Navigator.pop(ctx, true);
+                    return true;
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel'))],
         ),
-      ),
-      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel'))],
-    ),
+      );
+    },
   );
   return ok ?? false;
 }

@@ -4,17 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/display/customer_display.dart';
 import '../../core/scanner/socket_scanner.dart';
 import '../../core/sync/sync_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/widgets/brand.dart';
+import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/session.dart';
 import '../../data/repositories/settings_repository.dart';
-import '../catalog/add_product_screen.dart';
-import '../catalog/add_variant_screen.dart';
+import '../dsale/direct_sale_screen.dart';
 import '../options/options_screen.dart';
 import '../register/register_screen.dart';
 import '../sales/previous_sales_screen.dart';
+import '../sell/cart_controller.dart';
 import '../sell/sell_screen.dart';
 
 final shellTabProvider = NotifierProvider<ShellTab, int>(ShellTab.new);
@@ -25,15 +27,16 @@ class ShellTab extends Notifier<int> {
   void go(int index) => state = index;
 }
 
-/// Main till layout: bottom navigation on phones, a rail on tablets/desktop.
+/// Main till layout: Sell / D-Sale / Sales / Register / Options.
+/// D-Sale is a temporary parallel Direct Sale till; product Sell is unchanged.
+/// Add product & settings live under Options (manager-gated), not the main rail.
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
-  /// Shell tab index for Add Prod. (manager-gated on select).
-  static const addProductTab = 4;
-
-  /// Shell tab index for Add Vt's. (manager-gated on select).
-  static const addVariantTab = 5;
+  static const dSaleTab = 1;
+  static const salesTab = 2;
+  static const registerTab = 3;
+  static const optionsTab = 4;
 
   @override
   ConsumerState<AppShell> createState() => _AppShellState();
@@ -41,26 +44,40 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   Timer? _idle;
+  StreamSubscription<void>? _displaySync;
 
   static const _destinations = [
     (Icons.shopping_basket_outlined, Icons.shopping_basket, 'Sell'),
+    (Icons.calculate_outlined, Icons.calculate, 'D-Sale'),
     (Icons.receipt_long_outlined, Icons.receipt_long, 'Sales'),
     (Icons.point_of_sale_outlined, Icons.point_of_sale, 'Register'),
     (Icons.apps_outlined, Icons.apps, 'Options'),
-    (Icons.add_box_outlined, Icons.add_box, 'Add Prod.'),
-    (Icons.style_outlined, Icons.style, "Add Vt's."),
   ];
 
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => ref.read(syncServiceProvider).start());
+    Future.microtask(() {
+      ref.read(syncServiceProvider).start();
+      _pushCustomerDisplay();
+      _displaySync = ref.read(customerDisplayProvider).syncRequests.listen((_) => _pushCustomerDisplay());
+    });
     _resetIdle();
+  }
+
+  void _pushCustomerDisplay() {
+    final org = ref.read(bootstrapProvider).org;
+    final yt = ref.read(settingsProvider).customerDisplayYoutubeUrl;
+    final cart = ref.read(cartProvider);
+    ref.read(customerDisplayProvider).show(
+          DisplayState.fromCart(cart, ref.read(cartTotalsProvider), org?.name ?? '', youtubeUrl: yt),
+        );
   }
 
   @override
   void dispose() {
     _idle?.cancel();
+    _displaySync?.cancel();
     super.dispose();
   }
 
@@ -71,24 +88,25 @@ class _AppShellState extends ConsumerState<AppShell> {
     if (secs > 0) _idle = Timer(Duration(seconds: secs), () => ref.read(sessionProvider.notifier).lock());
   }
 
-  Future<void> _go(int i) async {
-    if (i == AppShell.addProductTab || i == AppShell.addVariantTab) {
-      if (!await ensureCanAddProduct(context, ref) || !mounted) return;
-    }
-    ref.read(shellTabProvider.notifier).go(i);
-  }
+  void _go(int i) => ref.read(shellTabProvider.notifier).go(i);
 
   @override
   Widget build(BuildContext context) {
     ref.watch(socketScannerProvider);
-    final index = ref.watch(shellTabProvider);
+    ref.listen(settingsProvider, (prev, next) {
+      if (prev?.customerDisplayYoutubeUrl != next.customerDisplayYoutubeUrl) {
+        _pushCustomerDisplay();
+      }
+    });
+    final index = ref.watch(shellTabProvider).clamp(0, _destinations.length - 1);
+    // Direct Sale is immersive till mode — hide the shell rail while active.
+    final immersiveDirectSale = index == AppShell.dSaleTab;
     final tabs = const [
       SellScreen(),
+      DirectSaleScreen(),
       PreviousSalesScreen(embedded: true),
       RegisterScreen(),
       OptionsScreen(),
-      AddProductScreen(embedded: true),
-      AddVariantScreen(embedded: true),
     ];
     final body = IndexedStack(index: index, children: tabs);
 
@@ -97,32 +115,31 @@ class _AppShellState extends ConsumerState<AppShell> {
       const SingleActivator(LogicalKeyboardKey.f2): () => _go(1),
       const SingleActivator(LogicalKeyboardKey.f3): () => _go(2),
       const SingleActivator(LogicalKeyboardKey.f4): () => _go(3),
-      const SingleActivator(LogicalKeyboardKey.f6): () => _go(AppShell.addProductTab),
-      const SingleActivator(LogicalKeyboardKey.f7): () => _go(AppShell.addVariantTab),
-      const SingleActivator(LogicalKeyboardKey.f5): () => ref.read(syncServiceProvider).syncNow(),
+      const SingleActivator(LogicalKeyboardKey.f5): () => _go(4),
+      const SingleActivator(LogicalKeyboardKey.f6): () => ref.read(syncServiceProvider).syncNow(),
       const SingleActivator(LogicalKeyboardKey.keyL, control: true): () => ref.read(sessionProvider.notifier).lock(),
       const SingleActivator(LogicalKeyboardKey.keyL, meta: true): () => ref.read(sessionProvider.notifier).lock(),
     };
 
     final Widget layout;
     if (context.isCompact) {
-      // 6 destinations: only show the selected label so Add Prod. / Add Vt's. stay on-screen.
       layout = Scaffold(
         body: body,
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: index,
-          onDestinationSelected: _go,
-          height: 64,
-          labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
-          destinations: [
-            for (final d in _destinations)
-              NavigationDestination(icon: Icon(d.$1), selectedIcon: Icon(d.$2), label: d.$3, tooltip: d.$3),
-          ],
-        ),
+        bottomNavigationBar: immersiveDirectSale
+            ? null
+            : NavigationBar(
+                selectedIndex: index,
+                onDestinationSelected: _go,
+                height: 64,
+                destinations: [
+                  for (final d in _destinations)
+                    NavigationDestination(icon: Icon(d.$1), selectedIcon: Icon(d.$2), label: d.$3, tooltip: d.$3),
+                ],
+              ),
       );
+    } else if (immersiveDirectSale) {
+      layout = Scaffold(body: body);
     } else {
-      // Custom scrollable rail — Material NavigationRail clips tall destination lists
-      // on laptop heights (Options / Add Prod. / Add Vt's. fall below the fold).
       layout = Scaffold(
         body: Row(
           children: [

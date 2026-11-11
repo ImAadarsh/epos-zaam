@@ -107,7 +107,10 @@ class _SaleCompleteScreenState extends ConsumerState<SaleCompleteScreen> {
   }
 
   void _newSale() {
-    ref.read(customerDisplayProvider).show(DisplayState(storeName: ref.read(bootstrapProvider).org?.name ?? ''));
+    ref.read(customerDisplayProvider).show(DisplayState(
+          storeName: ref.read(bootstrapProvider).org?.name ?? '',
+          youtubeUrl: ref.read(settingsProvider).customerDisplayYoutubeUrl,
+        ));
     Navigator.of(context).pop();
   }
 

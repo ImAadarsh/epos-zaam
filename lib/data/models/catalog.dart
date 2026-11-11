@@ -9,6 +9,19 @@ class ProductOption {
   factory ProductOption.fromJson(Map<String, dynamic> j) => ProductOption('${j['name']}', '${j['value']}');
 }
 
+/// Quantity volume break (promo already applied server-side). Buy N → cheaper unit price.
+class PriceTier {
+  const PriceTier({required this.minQuantity, required this.pricePence});
+  final int minQuantity;
+  final int pricePence;
+
+  Map<String, dynamic> toJson() => {'minQuantity': minQuantity, 'pricePence': pricePence};
+  factory PriceTier.fromJson(Map<String, dynamic> j) => PriceTier(
+        minQuantity: (j['minQuantity'] as num?)?.toInt() ?? 1,
+        pricePence: (j['pricePence'] as num?)?.toInt() ?? toPence(j['price'] as num?),
+      );
+}
+
 /// A sellable variant (the unit the till scans and sells).
 class Product {
   const Product({
@@ -25,6 +38,7 @@ class Product {
     this.description,
     required this.pricePence,
     this.promoPricePence,
+    this.priceTiers = const [],
     this.costPence,
     required this.taxRate,
     this.taxCode,
@@ -51,6 +65,8 @@ class Product {
   final String? description;
   final int pricePence;
   final int? promoPricePence;
+  /// Sorted ascending by [PriceTier.minQuantity]. Empty = use [effectivePricePence].
+  final List<PriceTier> priceTiers;
   final int? costPence;
   final double taxRate;
   final String? taxCode;
@@ -63,6 +79,20 @@ class Product {
   final String? updatedAt;
 
   int get effectivePricePence => promoPricePence ?? pricePence;
+
+  /// Unit price for [quantity] using volume breaks (same rules as B2B).
+  int priceForQuantity(int quantity) {
+    if (priceTiers.isEmpty) return effectivePricePence;
+    final qty = quantity < 1 ? 1 : quantity;
+    var matched = priceTiers.first.pricePence;
+    for (final t in priceTiers) {
+      if (qty < t.minQuantity) break;
+      matched = t.pricePence;
+    }
+    return matched;
+  }
+
+  bool get hasVolumeDiscount => priceTiers.any((t) => t.minQuantity > 1);
 
   bool get outOfStock => stock != null && stock! <= 0;
 
@@ -82,6 +112,7 @@ class Product {
     int? pricePence,
     int? promoPricePence,
     bool clearPromoPrice = false,
+    List<PriceTier>? priceTiers,
     String? updatedAt,
   }) =>
       Product(
@@ -98,6 +129,7 @@ class Product {
         description: description,
         pricePence: pricePence ?? this.pricePence,
         promoPricePence: clearPromoPrice ? null : (promoPricePence ?? this.promoPricePence),
+        priceTiers: priceTiers ?? this.priceTiers,
         costPence: costPence,
         taxRate: taxRate,
         taxCode: taxCode,
@@ -110,37 +142,56 @@ class Product {
         updatedAt: updatedAt ?? this.updatedAt,
       );
 
+  static List<PriceTier> _tiersFromApi(Map<String, dynamic> j, int fallbackPence) {
+    final raw = j['priceTiers'];
+    if (raw is! List || raw.isEmpty) {
+      return [PriceTier(minQuantity: 1, pricePence: fallbackPence)];
+    }
+    final tiers = [
+      for (final t in raw)
+        if (t is Map)
+          PriceTier(
+            minQuantity: (t['minQuantity'] as num?)?.toInt() ?? 1,
+            pricePence: t.containsKey('pricePence') ? (t['pricePence'] as num?)?.toInt() ?? 0 : toPence(t['price'] as num?),
+          ),
+    ]..sort((a, b) => a.minQuantity.compareTo(b.minQuantity));
+    return tiers.isEmpty ? [PriceTier(minQuantity: 1, pricePence: fallbackPence)] : tiers;
+  }
+
   /// Parses the `/api/pos/catalog` product shape.
-  factory Product.fromApi(Map<String, dynamic> j) => Product(
-        variantId: '${j['variantId']}',
-        catalogItemId: '${j['catalogItemId']}',
-        sku: '${j['sku'] ?? ''}',
-        catalogItemSku: j['catalogItemSku'] == null || '${j['catalogItemSku']}'.isEmpty
-            ? null
-            : '${j['catalogItemSku']}',
-        name: '${j['name'] ?? 'Item'}',
-        variantName: j['variantName'] as String?,
-        options: ((j['options'] as List?) ?? []).map((o) => ProductOption.fromJson(Map<String, dynamic>.from(o as Map))).toList(),
-        category: j['category'] as String?,
-        subCategory: j['subCategory'] as String?,
-        brand: j['brand'] as String?,
-        description: j['description'] as String?,
-        pricePence: toPence(j['price'] as num?),
-        promoPricePence: j['promoPrice'] == null ? null : toPence(j['promoPrice'] as num),
-        costPence: j['costPrice'] == null ? null : toPence(j['costPrice'] as num),
-        taxRate: () {
-          final raw = ((j['taxRate'] as num?) ?? 0.2).toDouble();
-          return raw > 1 ? raw / 100 : raw;
-        }(),
-        taxCode: j['taxCode'] as String?,
-        barcodes: ((j['barcodes'] as List?) ?? []).map((e) => '$e').toList(),
-        imageUrl: j['imageUrl'] as String?,
-        stock: (j['stock'] as num?)?.toInt(),
-        available: j['available'] != false,
-        active: j['active'] != false,
-        modifierGroupIds: ((j['modifierGroupIds'] as List?) ?? []).map((e) => '$e').toList(),
-        updatedAt: j['updatedAt'] as String?,
-      );
+  factory Product.fromApi(Map<String, dynamic> j) {
+    final pricePence = toPence(j['price'] as num?);
+    final promoPricePence = j['promoPrice'] == null ? null : toPence(j['promoPrice'] as num);
+    return Product(
+      variantId: '${j['variantId']}',
+      catalogItemId: '${j['catalogItemId']}',
+      sku: '${j['sku'] ?? ''}',
+      catalogItemSku: j['catalogItemSku'] == null || '${j['catalogItemSku']}'.isEmpty ? null : '${j['catalogItemSku']}',
+      name: '${j['name'] ?? 'Item'}',
+      variantName: j['variantName'] as String?,
+      options: ((j['options'] as List?) ?? []).map((o) => ProductOption.fromJson(Map<String, dynamic>.from(o as Map))).toList(),
+      category: j['category'] as String?,
+      subCategory: j['subCategory'] as String?,
+      brand: j['brand'] as String?,
+      description: j['description'] as String?,
+      pricePence: pricePence,
+      promoPricePence: promoPricePence,
+      priceTiers: _tiersFromApi(j, promoPricePence ?? pricePence),
+      costPence: j['costPrice'] == null ? null : toPence(j['costPrice'] as num),
+      taxRate: () {
+        final raw = ((j['taxRate'] as num?) ?? 0.2).toDouble();
+        return raw > 1 ? raw / 100 : raw;
+      }(),
+      taxCode: j['taxCode'] as String?,
+      barcodes: ((j['barcodes'] as List?) ?? []).map((e) => '$e').toList(),
+      imageUrl: j['imageUrl'] as String?,
+      stock: (j['stock'] as num?)?.toInt(),
+      available: j['available'] != false,
+      active: j['active'] != false,
+      modifierGroupIds: ((j['modifierGroupIds'] as List?) ?? []).map((e) => '$e').toList(),
+      updatedAt: j['updatedAt'] as String?,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'variantId': variantId,
@@ -156,6 +207,7 @@ class Product {
         'description': description,
         'pricePence': pricePence,
         'promoPricePence': promoPricePence,
+        'priceTiers': priceTiers.map((t) => t.toJson()).toList(),
         'costPence': costPence,
         'taxRate': taxRate,
         'taxCode': taxCode,
@@ -168,36 +220,39 @@ class Product {
         'updatedAt': updatedAt,
       };
 
-  factory Product.fromJson(Map<String, dynamic> j) => Product(
-        variantId: '${j['variantId']}',
-        catalogItemId: '${j['catalogItemId']}',
-        sku: '${j['sku'] ?? ''}',
-        catalogItemSku: j['catalogItemSku'] == null || '${j['catalogItemSku']}'.isEmpty
-            ? null
-            : '${j['catalogItemSku']}',
-        name: '${j['name'] ?? 'Item'}',
-        variantName: j['variantName'] as String?,
-        options: ((j['options'] as List?) ?? []).map((o) => ProductOption.fromJson(Map<String, dynamic>.from(o as Map))).toList(),
-        category: j['category'] as String?,
-        subCategory: j['subCategory'] as String?,
-        brand: j['brand'] as String?,
-        description: j['description'] as String?,
-        pricePence: (j['pricePence'] as num?)?.toInt() ?? 0,
-        promoPricePence: (j['promoPricePence'] as num?)?.toInt(),
-        costPence: (j['costPence'] as num?)?.toInt(),
-        taxRate: () {
-          final raw = ((j['taxRate'] as num?) ?? 0.2).toDouble();
-          return raw > 1 ? raw / 100 : raw;
-        }(),
-        taxCode: j['taxCode'] as String?,
-        barcodes: ((j['barcodes'] as List?) ?? []).map((e) => '$e').toList(),
-        imageUrl: j['imageUrl'] as String?,
-        stock: (j['stock'] as num?)?.toInt(),
-        available: j['available'] != false,
-        active: j['active'] != false,
-        modifierGroupIds: ((j['modifierGroupIds'] as List?) ?? []).map((e) => '$e').toList(),
-        updatedAt: j['updatedAt'] as String?,
-      );
+  factory Product.fromJson(Map<String, dynamic> j) {
+    final pricePence = (j['pricePence'] as num?)?.toInt() ?? 0;
+    final promoPricePence = (j['promoPricePence'] as num?)?.toInt();
+    return Product(
+      variantId: '${j['variantId']}',
+      catalogItemId: '${j['catalogItemId']}',
+      sku: '${j['sku'] ?? ''}',
+      catalogItemSku: j['catalogItemSku'] == null || '${j['catalogItemSku']}'.isEmpty ? null : '${j['catalogItemSku']}',
+      name: '${j['name'] ?? 'Item'}',
+      variantName: j['variantName'] as String?,
+      options: ((j['options'] as List?) ?? []).map((o) => ProductOption.fromJson(Map<String, dynamic>.from(o as Map))).toList(),
+      category: j['category'] as String?,
+      subCategory: j['subCategory'] as String?,
+      brand: j['brand'] as String?,
+      description: j['description'] as String?,
+      pricePence: pricePence,
+      promoPricePence: promoPricePence,
+      priceTiers: _tiersFromApi(j, promoPricePence ?? pricePence),
+      costPence: (j['costPence'] as num?)?.toInt(),
+      taxRate: () {
+        final raw = ((j['taxRate'] as num?) ?? 0.2).toDouble();
+        return raw > 1 ? raw / 100 : raw;
+      }(),
+      taxCode: j['taxCode'] as String?,
+      barcodes: ((j['barcodes'] as List?) ?? []).map((e) => '$e').toList(),
+      imageUrl: j['imageUrl'] as String?,
+      stock: (j['stock'] as num?)?.toInt(),
+      available: j['available'] != false,
+      active: j['active'] != false,
+      modifierGroupIds: ((j['modifierGroupIds'] as List?) ?? []).map((e) => '$e').toList(),
+      updatedAt: j['updatedAt'] as String?,
+    );
+  }
 }
 
 /// Parent catalogue product for Add Vt's. parent picker (`GET /api/pos/catalog-items`).

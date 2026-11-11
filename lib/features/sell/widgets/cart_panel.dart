@@ -13,6 +13,7 @@ import '../../customers/customer_picker.dart';
 import '../../sales/saved_sales_screen.dart';
 import '../cart_controller.dart';
 import '../sell_actions.dart';
+import 'sell_shortcuts.dart';
 import 'vat_dialog.dart';
 
 /// The basket: lines, totals and the actions around a sale.
@@ -154,6 +155,7 @@ class CartPanel extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 6),
+          const SellShortcutsBar(),
           const Divider(),
           Expanded(
             child: cart.isEmpty
@@ -283,9 +285,13 @@ class _CartLineTile extends ConsumerWidget {
     final line = totals.line;
     final theme = Theme.of(context);
     final ctrl = ref.read(cartProvider.notifier);
+    final volume = line.priceOverridePence == null &&
+        line.product.hasVolumeDiscount &&
+        line.product.priceForQuantity(line.quantity) < line.product.priceForQuantity(1);
     final details = [
       if (line.modifiers.isNotEmpty) line.modifiers.map((m) => m.name).join(', '),
       if (line.quantity > 1) '${line.quantity} × ${formatPence(line.unitPence)}',
+      if (volume) 'qty discount',
       if (line.priceOverridePence != null) 'price changed',
       if (line.discount != null) 'discount ${line.discount!.label(formatPence)}',
       if (line.note != null && line.note!.isNotEmpty) line.note!,

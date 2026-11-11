@@ -51,6 +51,7 @@ dependencies:
   collection: ^1.19.1
   image_picker: ^1.1.2
   file_picker: ^13.3.2
+  audioplayers: ^6.7.1
 
 dev_dependencies:
   flutter_test:
@@ -76,6 +77,7 @@ flutter:
 
   assets:
     - assets/brand/
+    - assets/sounds/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -69,6 +69,7 @@ class PosSettings {
     this.socketAppId = 'web:epos.zaamaitech.co.uk',
     this.socketDeveloperId = '',
     this.socketAppKey = '',
+    this.customerDisplayYoutubeUrl = '',
   });
 
   final bool cashEnabled;
@@ -135,6 +136,9 @@ class PosSettings {
   final String socketDeveloperId;
   final String socketAppKey;
 
+  /// YouTube watch/embed URL (or video id) for the customer-facing marketing screen.
+  final String customerDisplayYoutubeUrl;
+
   PosSettings copyWith({
     bool? cashEnabled,
     bool? cashPrompt,
@@ -180,6 +184,7 @@ class PosSettings {
     String? socketAppId,
     String? socketDeveloperId,
     String? socketAppKey,
+    String? customerDisplayYoutubeUrl,
   }) =>
       PosSettings(
         cashEnabled: cashEnabled ?? this.cashEnabled,
@@ -225,6 +230,7 @@ class PosSettings {
         socketAppId: socketAppId ?? this.socketAppId,
         socketDeveloperId: socketDeveloperId ?? this.socketDeveloperId,
         socketAppKey: socketAppKey ?? this.socketAppKey,
+        customerDisplayYoutubeUrl: customerDisplayYoutubeUrl ?? this.customerDisplayYoutubeUrl,
       );
 
   Map<String, dynamic> toJson({bool includeSecrets = true}) => {
@@ -271,6 +277,7 @@ class PosSettings {
         'socketAppId': socketAppId,
         'socketDeveloperId': socketDeveloperId,
         'socketAppKey': socketAppKey,
+        'customerDisplayYoutubeUrl': customerDisplayYoutubeUrl,
       };
 
   factory PosSettings.fromJson(Map<String, dynamic> j) {
@@ -322,6 +329,7 @@ class PosSettings {
       socketAppId: s('socketAppId', d.socketAppId),
       socketDeveloperId: s('socketDeveloperId', d.socketDeveloperId),
       socketAppKey: s('socketAppKey', d.socketAppKey),
+      customerDisplayYoutubeUrl: s('customerDisplayYoutubeUrl', d.customerDisplayYoutubeUrl),
     );
   }
 }

@@ -142,8 +142,9 @@ class SaleLine {
       );
 
   Map<String, dynamic> toApi() => {
-        'variantId': variantId,
-        'sku': sku.isEmpty ? variantId : sku,
+        // Empty variantId = miscellaneous / Direct Sale line (nullable on the server).
+        'variantId': variantId.trim().isEmpty ? null : variantId,
+        'sku': sku.isEmpty ? (variantId.trim().isEmpty ? 'MISC' : variantId) : sku,
         'name': name,
         'quantity': quantity,
         'unitPrice': fromPence(unitPence),

@@ -317,6 +317,30 @@ class SettingsScreen extends ConsumerWidget {
                   ],
                 ],
               ]),
+              header('Customer display'),
+              card([
+                ListTile(
+                  leading: const Icon(Icons.ondemand_video_outlined),
+                  title: const Text('YouTube marketing video'),
+                  subtitle: Text(
+                    s.customerDisplayYoutubeUrl.isEmpty
+                        ? 'Customer screen plays this instead of sale prices'
+                        : s.customerDisplayYoutubeUrl,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () => editText(
+                    'YouTube URL or video id',
+                    s.customerDisplayYoutubeUrl,
+                    (v) => set((x) => x.copyWith(customerDisplayYoutubeUrl: v.trim())),
+                  ),
+                ),
+                const ListTile(
+                  leading: Icon(Icons.info_outline),
+                  title: Text('No prices on the customer screen'),
+                  subtitle: Text('The second monitor shows this muted looping video only. Totals stay on the till.'),
+                ),
+              ]),
               header('Appearance'),
               card([
                 ListTile(

@@ -8,11 +8,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/sync/connectivity.dart';
 import '../../core/widgets/dialogs.dart';
+import '../../data/models/catalog.dart';
 import '../../data/models/org.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../shell/app_shell.dart';
 import '../shell/status_bar.dart';
+import 'add_variant_screen.dart';
 import 'catalog_form_shared.dart';
 
 export 'catalog_form_shared.dart' show ensureCanAddProduct;
@@ -452,7 +454,20 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         unawaited(_reloadClassifications(silent: true));
       } else if (next == _AfterSave.addVariant) {
         if (!widget.embedded) Navigator.of(context).pop();
-        ref.read(shellTabProvider.notifier).go(AppShell.addVariantTab);
+        ref.read(shellTabProvider.notifier).go(0);
+        final parent = CatalogItemRef(
+          id: '${item['id']}',
+          sku: '${item['sku'] ?? ''}',
+          name: '${item['name'] ?? displayName}',
+          category: item['category'] as String?,
+          brand: item['brand'] as String?,
+          status: '${item['status'] ?? 'active'}',
+          variantCount: 0,
+          imageUrl: item['imageUrl'] as String?,
+        );
+        if (context.mounted) {
+          await openAddVariantScreen(context, ref, initialParent: parent);
+        }
       } else {
         if (!widget.embedded) Navigator.of(context).pop();
         ref.read(shellTabProvider.notifier).go(0);

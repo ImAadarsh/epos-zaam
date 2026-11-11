@@ -48,7 +48,9 @@ class CartLine {
   final Discount? discount;
   final String? note;
 
-  int get unitPence => (priceOverridePence ?? product.effectivePricePence) + modifiers.fold(0, (s, m) => s + m.priceDeltaPence);
+  /// Unit price for the current line qty (volume breaks apply unless overridden).
+  int get unitPence =>
+      (priceOverridePence ?? product.priceForQuantity(quantity)) + modifiers.fold(0, (s, m) => s + m.priceDeltaPence);
 
   int get grossPence => unitPence * quantity;
 

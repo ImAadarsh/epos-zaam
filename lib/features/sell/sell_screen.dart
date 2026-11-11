@@ -18,6 +18,7 @@ import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/sales_repository.dart';
 import '../../data/repositories/session.dart';
+import '../../data/repositories/settings_repository.dart';
 import '../../data/repositories/shift_repository.dart';
 import '../catalog/add_variant_screen.dart';
 import '../register/open_register_card.dart';
@@ -28,6 +29,7 @@ import 'cart_controller.dart';
 import 'payment_screen.dart';
 import 'sell_actions.dart';
 import 'widgets/cart_panel.dart';
+import 'widgets/sell_shortcuts.dart';
 import 'widgets/category_bar.dart';
 import 'widgets/product_details_sheet.dart';
 import 'widgets/product_grid.dart';
@@ -225,7 +227,17 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     final shift = ref.watch(shiftProvider);
     ref.listen(cartProvider, (_, cart) {
       final org = ref.read(bootstrapProvider).org;
-      ref.read(customerDisplayProvider).show(DisplayState.fromCart(cart, ref.read(cartTotalsProvider), org?.name ?? ''));
+      final yt = ref.read(settingsProvider).customerDisplayYoutubeUrl;
+      ref.read(customerDisplayProvider).show(
+            DisplayState.fromCart(cart, ref.read(cartTotalsProvider), org?.name ?? '', youtubeUrl: yt),
+          );
+    });
+    ref.listen(settingsProvider, (_, s) {
+      final cart = ref.read(cartProvider);
+      final org = ref.read(bootstrapProvider).org;
+      ref.read(customerDisplayProvider).show(
+            DisplayState.fromCart(cart, ref.read(cartTotalsProvider), org?.name ?? '', youtubeUrl: s.customerDisplayYoutubeUrl),
+          );
     });
 
     final register = ref.watch(currentRegisterProvider);
@@ -442,6 +454,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       final totals = ref.watch(cartTotalsProvider);
       body = Column(
         children: [
+          const SellShortcutsBar(),
           Expanded(child: products),
           Material(
             elevation: 8,
