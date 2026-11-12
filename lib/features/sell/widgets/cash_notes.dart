@@ -21,7 +21,7 @@ class CashNote {
   ];
 }
 
-/// Amount to Pay / Paid / Balance / Change strip (Qepos-style).
+/// Amount to Pay | Paid | Balance | Change — one equal-width horizontal row.
 class CashPaymentDetails extends StatelessWidget {
   const CashPaymentDetails({
     super.key,
@@ -41,7 +41,8 @@ class CashPaymentDetails extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final pad = compact ? 14.0 : 16.0;
+    final gap = compact ? 10.0 : 12.0;
+    final pad = compact ? 12.0 : 14.0;
     return Container(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
@@ -51,30 +52,23 @@ class CashPaymentDetails extends StatelessWidget {
         ),
       ),
       padding: EdgeInsets.all(pad),
-      child: Column(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Expanded(child: _cell(context, 'Amount to Pay', formatPence(amountDuePence))),
-              SizedBox(width: compact ? 10 : 12),
-              Expanded(child: _cell(context, 'Paid Amount', paidPence > 0 ? formatPence(paidPence) : '—')),
-            ],
-          ),
-          SizedBox(height: compact ? 10 : 14),
-          Row(
-            children: [
-              Expanded(child: _cell(context, 'Balance', formatPence(balance))),
-              SizedBox(width: compact ? 10 : 12),
-              Expanded(
-                child: _cell(
-                  context,
-                  'Change',
-                  formatPence(change),
-                  emphasize: change > 0,
-                  valueColor: change > 0 ? ZaamColors.green : null,
-                ),
-              ),
-            ],
+          Expanded(child: _cell(context, 'Amount to Pay', formatPence(amountDuePence))),
+          SizedBox(width: gap),
+          Expanded(child: _cell(context, 'Paid Amount', paidPence > 0 ? formatPence(paidPence) : '—')),
+          SizedBox(width: gap),
+          Expanded(child: _cell(context, 'Balance', formatPence(balance))),
+          SizedBox(width: gap),
+          Expanded(
+            child: _cell(
+              context,
+              'Change',
+              formatPence(change),
+              emphasize: change > 0,
+              valueColor: change > 0 ? ZaamColors.green : null,
+            ),
           ),
         ],
       ),
@@ -90,7 +84,7 @@ class CashPaymentDetails extends StatelessWidget {
   }) {
     final theme = Theme.of(context);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 14 : 16, vertical: compact ? 12 : 14),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 14, vertical: compact ? 12 : 16),
       decoration: BoxDecoration(
         color: emphasize ? ZaamColors.green.withValues(alpha: 0.14) : theme.colorScheme.surface.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(12),
@@ -98,9 +92,12 @@ class CashPaymentDetails extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
             label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelMedium?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
               fontWeight: FontWeight.w600,
@@ -108,7 +105,7 @@ class CashPaymentDetails extends StatelessWidget {
               fontSize: compact ? 13 : 14,
             ),
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: compact ? 6 : 8),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
@@ -118,7 +115,8 @@ class CashPaymentDetails extends StatelessWidget {
                 fontWeight: FontWeight.w700,
                 color: valueColor,
                 fontFeatures: const [FontFeature.tabularFigures()],
-                fontSize: compact ? 24 : 28,
+                fontSize: compact ? 26 : 30,
+                height: 1.1,
               ),
             ),
           ),
@@ -134,7 +132,7 @@ class CashNoteBar extends StatelessWidget {
     super.key,
     required this.onNote,
     this.enabled = true,
-    this.height = 96,
+    this.height = 110,
   });
 
   final ValueChanged<int> onNote;
@@ -148,7 +146,7 @@ class CashNoteBar extends StatelessWidget {
       child: Row(
         children: [
           for (var i = 0; i < CashNote.values.length; i++) ...[
-            if (i > 0) const SizedBox(width: 10),
+            if (i > 0) const SizedBox(width: 12),
             Expanded(
               child: _NoteButton(
                 note: CashNote.values[i],
@@ -176,21 +174,21 @@ class _NoteButton extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         child: Ink(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF3A4554)),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF3A4554), width: 1.5),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.25),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
+                color: Colors.black.withValues(alpha: 0.28),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(11),
+            borderRadius: BorderRadius.circular(13),
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -203,34 +201,33 @@ class _NoteButton extends StatelessWidget {
                     child: Center(
                       child: Text(
                         note.label,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 22),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 26),
                       ),
                     ),
                   ),
                 ),
-                // Soft left shade so the denomination stays readable if crop varies.
                 const DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.centerLeft,
                       end: Alignment.centerRight,
-                      colors: [Color(0x66000000), Color(0x00000000)],
+                      colors: [Color(0x77000000), Color(0x00000000)],
                     ),
                   ),
                 ),
                 Align(
                   alignment: Alignment.bottomLeft,
                   child: Padding(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.all(10),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        borderRadius: BorderRadius.circular(6),
+                        color: Colors.black.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
                         note.label,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
                       ),
                     ),
                   ),
@@ -321,14 +318,21 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
-    // Leave room for title, actions, and dialog insets so Cancel / Take cash stay pinned.
-    final maxContentHeight = (media.size.height - media.viewInsets.bottom - 200).clamp(280.0, 720.0);
+    final screenW = media.size.width;
+    final screenH = media.size.height;
+    // Wide till modal: ~78% of width, capped for ultra-wide displays.
+    final dialogW = (screenW * 0.78).clamp(640.0, 1080.0);
+    // Leave room for title + pinned actions so nothing overflows the bottom.
+    final maxContentHeight = (screenH - media.viewInsets.bottom - 168).clamp(320.0, 820.0);
+    final shortViewport = maxContentHeight < 520;
+    final noteH = shortViewport ? 88.0 : 118.0;
+    final keyH = shortViewport ? 52.0 : 58.0;
 
-    Widget key(String label, {VoidCallback? onTap, Color? color, int flex = 1, double height = 54}) {
+    Widget key(String label, {VoidCallback? onTap, Color? color, int flex = 1, double? height}) {
       return Expanded(
         flex: flex,
         child: Padding(
-          padding: const EdgeInsets.all(3),
+          padding: const EdgeInsets.all(4),
           child: Material(
             color: color ?? const Color(0xFF243041),
             borderRadius: BorderRadius.circular(12),
@@ -336,9 +340,9 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
               borderRadius: BorderRadius.circular(12),
               onTap: onTap,
               child: SizedBox(
-                height: height,
+                height: height ?? keyH,
                 child: Center(
-                  child: Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 20)),
+                  child: Text(label, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: shortViewport ? 20 : 22)),
                 ),
               ),
             ),
@@ -349,7 +353,7 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
 
     Widget changeBanner() {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         decoration: BoxDecoration(
           color: ZaamColors.green.withValues(alpha: 0.16),
           borderRadius: BorderRadius.circular(12),
@@ -357,96 +361,164 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.payments_outlined, color: ZaamColors.green, size: 24),
-            const SizedBox(width: 10),
-            const Text('Change', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16)),
+            const Icon(Icons.payments_outlined, color: ZaamColors.green, size: 26),
+            const SizedBox(width: 12),
+            const Text('Change due', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 17)),
             const Spacer(),
-            Text(formatPence(_change), style: const TextStyle(color: ZaamColors.green, fontWeight: FontWeight.w800, fontSize: 24)),
+            Text(formatPence(_change), style: const TextStyle(color: ZaamColors.green, fontWeight: FontWeight.w800, fontSize: 26)),
           ],
         ),
       );
     }
 
+    final keypad = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(children: [key('1', onTap: () => _digit('1')), key('2', onTap: () => _digit('2')), key('3', onTap: () => _digit('3')), key('C', onTap: _clear, color: const Color(0xFF3A4A5C))]),
+        Row(children: [key('4', onTap: () => _digit('4')), key('5', onTap: () => _digit('5')), key('6', onTap: () => _digit('6')), key('⌫', onTap: _back, color: const Color(0xFF3A4A5C))]),
+        Row(children: [key('7', onTap: () => _digit('7')), key('8', onTap: () => _digit('8')), key('9', onTap: () => _digit('9')), key('00', onTap: () => _digit('00'))]),
+        Row(children: [key('0', onTap: () => _digit('0'), flex: 3), const Expanded(child: SizedBox())]),
+      ],
+    );
+
+    final sidePanel = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: shortViewport ? 48 : 56,
+          child: OutlinedButton(
+            onPressed: _exact,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: ZaamColors.gold,
+              side: BorderSide(color: ZaamColors.gold.withValues(alpha: 0.65), width: 1.5),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+            ),
+            child: Text(
+              'Exact ${formatPence(widget.amountDuePence)}',
+              style: TextStyle(color: ZaamColors.gold, fontWeight: FontWeight.w800, fontSize: shortViewport ? 16 : 18),
+            ),
+          ),
+        ),
+        const Spacer(),
+        if (_change > 0) ...[
+          changeBanner(),
+          SizedBox(height: shortViewport ? 12 : 16),
+        ],
+        Text(
+          _paid > 0 ? 'Tendered ${formatPence(_paid)}' : 'Enter cash received',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.55),
+            fontWeight: FontWeight.w500,
+            fontSize: 14,
+          ),
+        ),
+      ],
+    );
+
     return AlertDialog(
       backgroundColor: const Color(0xFF1A222D),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
-      titlePadding: const EdgeInsets.fromLTRB(28, 20, 28, 8),
-      contentPadding: const EdgeInsets.fromLTRB(28, 8, 28, 8),
-      actionsPadding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-      title: const Text('Cash payment', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 24)),
-      content: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 560, maxHeight: maxContentHeight),
-        child: Focus(
-          autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is! KeyDownEvent) return KeyEventResult.ignored;
-            final ch = event.character;
-            if (ch != null && RegExp(r'^[0-9]$').hasMatch(ch)) {
-              _digit(ch);
-              return KeyEventResult.handled;
-            }
-            if (event.logicalKey == LogicalKeyboardKey.backspace) {
-              _back();
-              return KeyEventResult.handled;
-            }
-            if ((event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) && _canComplete) {
-              Navigator.pop(context, _paid);
-              return KeyEventResult.handled;
-            }
-            return KeyEventResult.ignored;
-          },
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      CashPaymentDetails(amountDuePence: widget.amountDuePence, paidPence: _paid, compact: true),
-                      const SizedBox(height: 14),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          // Keep notes readable; shrink slightly only on short viewports.
-                          final noteH = maxContentHeight < 480 ? 72.0 : 88.0;
-                          return CashNoteBar(onNote: _addNote, height: noteH);
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: _exact,
-                          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                          child: Text(
-                            'Exact ${formatPence(widget.amountDuePence)}',
-                            style: const TextStyle(color: ZaamColors.gold, fontWeight: FontWeight.w700, fontSize: 16),
-                          ),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: ((screenW - dialogW) / 2).clamp(16.0, 80.0),
+        vertical: 16,
+      ),
+      titlePadding: const EdgeInsets.fromLTRB(28, 22, 28, 6),
+      contentPadding: const EdgeInsets.fromLTRB(28, 10, 28, 8),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+      actionsAlignment: MainAxisAlignment.spaceBetween,
+      title: const Text('Cash payment', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 26)),
+      content: SizedBox(
+        width: dialogW,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: dialogW, maxHeight: maxContentHeight),
+          child: Focus(
+            autofocus: true,
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent) return KeyEventResult.ignored;
+              final ch = event.character;
+              if (ch != null && RegExp(r'^[0-9]$').hasMatch(ch)) {
+                _digit(ch);
+                return KeyEventResult.handled;
+              }
+              if (event.logicalKey == LogicalKeyboardKey.backspace) {
+                _back();
+                return KeyEventResult.handled;
+              }
+              if ((event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) && _canComplete) {
+                Navigator.pop(context, _paid);
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        CashPaymentDetails(amountDuePence: widget.amountDuePence, paidPence: _paid),
+                        SizedBox(height: shortViewport ? 14 : 18),
+                        CashNoteBar(onNote: _addNote, height: noteH),
+                        SizedBox(height: shortViewport ? 14 : 18),
+                        // Till layout: keypad + Exact / change side-by-side on wide dialogs.
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final sideBySide = constraints.maxWidth >= 720;
+                            if (!sideBySide) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: TextButton(
+                                      onPressed: _exact,
+                                      child: Text(
+                                        'Exact ${formatPence(widget.amountDuePence)}',
+                                        style: const TextStyle(color: ZaamColors.gold, fontWeight: FontWeight.w700, fontSize: 16),
+                                      ),
+                                    ),
+                                  ),
+                                  keypad,
+                                  if (_change > 0) ...[
+                                    const SizedBox(height: 12),
+                                    changeBanner(),
+                                  ],
+                                ],
+                              );
+                            }
+                            return IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(flex: 5, child: keypad),
+                                  const SizedBox(width: 20),
+                                  Expanded(flex: 4, child: sidePanel),
+                                ],
+                              ),
+                            );
+                          },
                         ),
-                      ),
-                      const SizedBox(height: 2),
-                      Row(children: [key('1', onTap: () => _digit('1')), key('2', onTap: () => _digit('2')), key('3', onTap: () => _digit('3')), key('C', onTap: _clear, color: const Color(0xFF3A4A5C))]),
-                      Row(children: [key('4', onTap: () => _digit('4')), key('5', onTap: () => _digit('5')), key('6', onTap: () => _digit('6')), key('⌫', onTap: _back, color: const Color(0xFF3A4A5C))]),
-                      Row(children: [key('7', onTap: () => _digit('7')), key('8', onTap: () => _digit('8')), key('9', onTap: () => _digit('9')), key('00', onTap: () => _digit('00'))]),
-                      Row(children: [key('0', onTap: () => _digit('0'), flex: 3), const Expanded(child: SizedBox())]),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              if (_change > 0) ...[
-                const SizedBox(height: 10),
-                changeBanner(),
               ],
-            ],
+            ),
           ),
         ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
-          child: const Text('Cancel', style: TextStyle(color: Colors.white70, fontSize: 16)),
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            minimumSize: const Size(100, 52),
+          ),
+          child: const Text('Cancel', style: TextStyle(color: Colors.white70, fontSize: 17)),
         ),
         FilledButton(
           onPressed: _canComplete
@@ -457,10 +529,11 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
               : null,
           style: FilledButton.styleFrom(
             backgroundColor: const Color(0xFF1F8A4C),
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-            minimumSize: const Size(120, 48),
+            disabledBackgroundColor: const Color(0xFF2A3A45),
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+            minimumSize: const Size(160, 52),
           ),
-          child: const Text('Take cash', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          child: const Text('Take cash', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
         ),
       ],
     );

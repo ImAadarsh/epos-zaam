@@ -323,7 +323,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           const SizedBox(height: 10),
           CashPaymentDetails(amountDuePence: remaining, paidPence: tendered),
           const SizedBox(height: 16),
-          CashNoteBar(onNote: _addNote, enabled: !_busy && remaining > 0, height: 100),
+          CashNoteBar(onNote: _addNote, enabled: !_busy && remaining > 0, height: 112),
           const SizedBox(height: 16),
         ],
         Text(_digits.isEmpty ? 'Amount (remaining)' : 'Paid / amount', style: theme.textTheme.bodyLarge),
@@ -382,13 +382,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         body: _busy && remaining == 0
             ? const Center(child: CircularProgressIndicator())
             : context.isCompact
-                ? ListView(padding: const EdgeInsets.all(18), children: [summary, const SizedBox(height: 18), Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480), child: entry))])
+                ? ListView(padding: const EdgeInsets.all(18), children: [summary, const SizedBox(height: 18), Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 720), child: entry))])
                 : Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: summary)),
+                      Expanded(flex: 4, child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: summary)),
                       const VerticalDivider(width: 1),
-                      Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480), child: entry)))),
+                      Expanded(flex: 6, child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 720), child: entry)))),
                     ],
                   ),
       ),
