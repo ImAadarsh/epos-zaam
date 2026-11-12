@@ -71,10 +71,18 @@ class DSaleService {
 
   /// Cash misc sale for [amountPence]. Stays on the Direct Sale screen.
   /// Never auto-prints — Print button reprints the last receipt explicitly.
-  Future<DSaleResult> completeSale(int amountPence) async {
+  ///
+  /// [tenderedPence] is what the customer handed over (must be >= amount). Change
+  /// is recorded as tendered − amount. Defaults to exact amount when omitted.
+  Future<DSaleResult> completeSale(int amountPence, {int? tenderedPence}) async {
     if (amountPence <= 0) {
       return const DSaleResult(ok: false, message: 'Enter an amount greater than zero', error: true);
     }
+    final tendered = tenderedPence ?? amountPence;
+    if (tendered < amountPence) {
+      return const DSaleResult(ok: false, message: 'Cash tendered is less than the amount due', error: true);
+    }
+    final change = tendered - amountPence;
     final shift = ref.read(shiftProvider);
     if (shift == null) {
       return const DSaleResult(ok: false, message: 'Open the register before taking a sale', error: true);
@@ -102,7 +110,7 @@ class DSaleService {
       taxPence: 0,
       totalPence: amountPence,
       tipPence: 0,
-      changePence: 0,
+      changePence: change,
       notes: 'EPOS Direct Sale',
       lines: [
         SaleLine(
@@ -120,20 +128,21 @@ class DSaleService {
         ),
       ],
       payments: [
-        SalePayment(method: PaymentMethod.cash, amountPence: amountPence, tenderedPence: amountPence),
+        SalePayment(method: PaymentMethod.cash, amountPence: amountPence, tenderedPence: tendered),
       ],
     );
 
     await ref.read(localSalesProvider.notifier).add(sale);
-    AppLog.info('Direct Sale ${sale.receiptNumber} ${sale.totalPence}p completed');
+    AppLog.info('Direct Sale ${sale.receiptNumber} ${sale.totalPence}p completed (tendered ${tendered}p change ${change}p)');
 
     if (settings.openDrawerOnCash) {
       ref.read(printerServiceProvider).openDrawer().catchError((Object e) => AppLog.warn('Drawer: $e'));
     }
 
+    final changeNote = change > 0 ? ' · change £${(change / 100).toStringAsFixed(2)}' : '';
     return DSaleResult(
       ok: true,
-      message: 'Sale ${sale.receiptNumber} · £${(amountPence / 100).toStringAsFixed(2)} recorded',
+      message: 'Sale ${sale.receiptNumber} · £${(amountPence / 100).toStringAsFixed(2)} recorded$changeNote',
       sale: sale,
     );
   }
@@ -216,19 +225,21 @@ class DSaleService {
   }
 
   /// Amend amount by voiding the old sale and creating a new Direct Sale (ERP-safe).
-  Future<DSaleResult> editSale(SaleRecord sale, int newAmountPence) async {
+  Future<DSaleResult> editSale(SaleRecord sale, int newAmountPence, {int? tenderedPence}) async {
     if (newAmountPence <= 0) {
       return const DSaleResult(ok: false, message: 'Enter an amount greater than zero', error: true);
     }
     if (sale.status == 'voided') {
       return const DSaleResult(ok: false, message: 'Cannot edit a voided sale', error: true);
     }
-    if (newAmountPence == sale.totalPence) {
+    final prevTender = sale.payments.isEmpty ? sale.totalPence : (sale.payments.first.tenderedPence ?? sale.totalPence);
+    final tendered = tenderedPence ?? newAmountPence;
+    if (newAmountPence == sale.totalPence && tendered == prevTender) {
       return DSaleResult(ok: true, message: 'Amount unchanged · ${sale.receiptNumber}', sale: sale);
     }
     final voided = await voidSale(sale, reason: 'Amended via Direct Sale');
     if (!voided.ok) return voided;
-    final created = await completeSale(newAmountPence);
+    final created = await completeSale(newAmountPence, tenderedPence: tendered);
     if (!created.ok) {
       return DSaleResult(
         ok: false,

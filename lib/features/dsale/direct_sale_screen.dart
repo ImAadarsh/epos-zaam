@@ -15,6 +15,7 @@ import '../../data/repositories/shift_repository.dart';
 import '../register/open_register_card.dart';
 import '../shell/app_shell.dart';
 import '../shell/status_bar.dart';
+import '../sell/widgets/cash_notes.dart';
 import 'dsale_service.dart';
 import 'printer_connect_dialog.dart';
 
@@ -94,7 +95,10 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
       _flashMsg('Enter the sale total first', error: true);
       return;
     }
-    await _run(() => ref.read(dSaleServiceProvider).completeSale(_pence));
+    final due = _pence;
+    final tendered = await showCashTenderDialog(context, amountDuePence: due, playClick: true);
+    if (!mounted || tendered == null) return;
+    await _run(() => ref.read(dSaleServiceProvider).completeSale(due, tenderedPence: tendered));
   }
 
   Future<void> _print() async {
@@ -212,7 +216,9 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
       builder: (ctx) => _EditAmountDialog(initialPence: sale.totalPence, receiptNumber: sale.receiptNumber),
     );
     if (newPence == null || !mounted) return;
-    await _run(() => ref.read(dSaleServiceProvider).editSale(sale, newPence));
+    final tendered = await showCashTenderDialog(context, amountDuePence: newPence, playClick: true);
+    if (!mounted || tendered == null) return;
+    await _run(() => ref.read(dSaleServiceProvider).editSale(sale, newPence, tenderedPence: tendered));
   }
 
   void _backToModules() {

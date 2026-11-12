@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/display/customer_display.dart';
 import '../../core/hardware/payments/card_terminal.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/app_log.dart';
 import '../../core/utils/money.dart';
 import '../../core/utils/responsive.dart';
@@ -14,9 +15,10 @@ import '../../data/repositories/settings_repository.dart';
 import 'cart_controller.dart';
 import 'checkout_service.dart';
 import 'sale_complete_screen.dart';
+import 'widgets/cash_notes.dart';
 
-/// Take payment: cash (with change), card via the configured provider, or
-/// other tenders; any mix of them (split payments).
+/// Take payment: cash (with note quick-select + change), card via the configured
+/// provider, or other tenders; any mix of them (split payments).
 class PaymentScreen extends ConsumerStatefulWidget {
   const PaymentScreen({super.key});
 
@@ -32,6 +34,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   int get _total => ref.read(cartTotalsProvider).totalPence;
   int get _paid => _payments.fold(0, (s, p) => s + p.amountPence);
   int get _remaining => (_total - _paid).clamp(0, 1 << 31);
+
+  /// Keypad / note-accumulated tender (0 when empty). Used for cash paid + change.
+  int get _tendered => _digits.isEmpty ? 0 : (int.tryParse(_digits) ?? 0);
+
+  /// Method buttons default to remaining when nothing has been typed yet.
   int get _entered => _digits.isEmpty ? _remaining : (int.tryParse(_digits) ?? 0);
 
   @override
@@ -44,9 +51,30 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final totals = ref.read(cartTotalsProvider);
     final org = ref.read(bootstrapProvider).org;
     final yt = ref.read(settingsProvider).customerDisplayYoutubeUrl;
+    final change = (_tendered - _remaining).clamp(0, 1 << 31);
     ref.read(customerDisplayProvider).show(
-          DisplayState.fromCart(ref.read(cartProvider), totals, org?.name ?? '', youtubeUrl: yt).withMode('paying'),
+          DisplayState.fromCart(ref.read(cartProvider), totals, org?.name ?? '', youtubeUrl: yt)
+              .withMode('paying')
+              .copyWith(changePence: change),
         );
+  }
+
+  void _setDigits(String next) {
+    setState(() => _digits = next.length > 8 ? _digits : next);
+    _showOnDisplay();
+  }
+
+  void _appendDigits(String d) {
+    final next = '$_digits$d';
+    if (next.length > 8) return;
+    _setDigits(next);
+  }
+
+  void _addNote(int pence) {
+    if (_busy || _remaining == 0) return;
+    final next = _tendered + pence;
+    if (next > 99999999) return;
+    _setDigits('$next');
   }
 
   Future<void> _addPayment(SalePayment p) async {
@@ -79,9 +107,14 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     if (t <= 0) return;
     final settings = ref.read(settingsProvider);
     final applied = t < _remaining ? t : _remaining;
+    final change = t - applied;
     if (settings.cashPrompt) {
-      final change = t - applied;
-      final ok = await confirm(context, title: 'Cash ${formatPence(t)}', message: change > 0 ? 'Change due: ${formatPence(change)}' : 'Take cash payment?', confirmLabel: 'Take cash');
+      final ok = await confirm(
+        context,
+        title: 'Cash ${formatPence(t)}',
+        message: change > 0 ? 'Change due: ${formatPence(change)}' : 'Take cash payment?',
+        confirmLabel: 'Take cash',
+      );
       if (!ok) return;
     }
     await _addPayment(SalePayment(method: PaymentMethod.cash, amountPence: applied, tenderedPence: t));
@@ -226,6 +259,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final settings = ref.watch(settingsProvider);
     final totals = ref.watch(cartTotalsProvider);
     final remaining = _remaining;
+    final tendered = _tendered;
+    final change = (tendered - remaining).clamp(0, 1 << 31);
 
     final summary = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -239,7 +274,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               leading: Icon(switch (_payments[i].method) { PaymentMethod.cash => Icons.payments_outlined, PaymentMethod.card => Icons.credit_card, _ => Icons.receipt_outlined }),
               title: Text(_payments[i].label),
               subtitle: _payments[i].tenderedPence != null && _payments[i].tenderedPence! > _payments[i].amountPence
-                  ? Text('Tendered ${formatPence(_payments[i].tenderedPence!)}')
+                  ? Text('Tendered ${formatPence(_payments[i].tenderedPence!)} · change ${formatPence(_payments[i].tenderedPence! - _payments[i].amountPence)}')
                   : _payments[i].tipPence > 0
                       ? Text('Tip ${formatPence(_payments[i].tipPence)}')
                       : null,
@@ -256,29 +291,66 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           const Spacer(),
           Text(formatPence(remaining), style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
         ]),
+        if (settings.cashEnabled && change > 0) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: ZaamColors.green.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: ZaamColors.green.withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.payments_outlined, color: ZaamColors.green),
+                const SizedBox(width: 10),
+                Text('Change due', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                const Spacer(),
+                Text(formatPence(change), style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800, color: ZaamColors.green)),
+              ],
+            ),
+          ),
+        ],
       ],
     );
 
     final entry = Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(_digits.isEmpty ? 'Amount (remaining)' : 'Amount', style: theme.textTheme.bodyMedium),
+        if (settings.cashEnabled) ...[
+          Text('Payment details', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          CashPaymentDetails(amountDuePence: remaining, paidPence: tendered),
+          const SizedBox(height: 16),
+          CashNoteBar(onNote: _addNote, enabled: !_busy && remaining > 0, height: 100),
+          const SizedBox(height: 16),
+        ],
+        Text(_digits.isEmpty ? 'Amount (remaining)' : 'Paid / amount', style: theme.textTheme.bodyLarge),
         Text(formatPence(_entered), style: theme.textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         if (settings.cashEnabled)
-          Wrap(spacing: 8, runSpacing: 8, alignment: WrapAlignment.center, children: [
+          Wrap(spacing: 10, runSpacing: 10, alignment: WrapAlignment.center, children: [
             for (final v in _quickCash(remaining))
-              ActionChip(avatar: const Icon(Icons.payments_outlined, size: 18), label: Text(v == remaining ? 'Exact ${formatPence(v)}' : formatPence(v)), onPressed: _busy ? null : () => _cash(v)),
+              ActionChip(
+                avatar: const Icon(Icons.payments_outlined, size: 20),
+                label: Text(v == remaining ? 'Exact ${formatPence(v)}' : formatPence(v), style: const TextStyle(fontSize: 14)),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                onPressed: _busy || remaining == 0 ? null : () => _cash(v),
+              ),
           ]),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         Keypad(
           showDoubleZero: true,
-          onDigit: (d) => setState(() => _digits = (_digits + d).length > 8 ? _digits : _digits + d),
-          onBackspace: () => setState(() => _digits = _digits.isEmpty ? '' : _digits.substring(0, _digits.length - 1)),
+          onDigit: (d) => _appendDigits(d),
+          onBackspace: () {
+            if (_digits.isEmpty) return;
+            _setDigits(_digits.substring(0, _digits.length - 1));
+          },
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
         ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
+          constraints: const BoxConstraints(maxWidth: 400),
           child: Column(children: [
             if (settings.cashEnabled)
               _MethodButton(icon: Icons.payments_outlined, label: 'Cash', onPressed: _busy || remaining == 0 ? null : () => _cash()),
@@ -310,13 +382,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         body: _busy && remaining == 0
             ? const Center(child: CircularProgressIndicator())
             : context.isCompact
-                ? ListView(padding: const EdgeInsets.all(16), children: [summary, const SizedBox(height: 16), Center(child: entry)])
+                ? ListView(padding: const EdgeInsets.all(18), children: [summary, const SizedBox(height: 18), Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480), child: entry))])
                 : Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: summary)),
                       const VerticalDivider(width: 1),
-                      Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Center(child: entry))),
+                      Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480), child: entry)))),
                     ],
                   ),
       ),

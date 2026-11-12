@@ -55,6 +55,21 @@ class DisplayState {
         changePence: changePence,
         message: message,
       );
+
+  DisplayState copyWith({
+    String? mode,
+    String? storeName,
+    String? youtubeUrl,
+    int? changePence,
+    String? message,
+  }) =>
+      DisplayState(
+        mode: mode ?? this.mode,
+        storeName: storeName ?? this.storeName,
+        youtubeUrl: youtubeUrl ?? this.youtubeUrl,
+        changePence: changePence ?? this.changePence,
+        message: message ?? this.message,
+      );
 }
 
 DisplayState? readStoredDisplayState() {
