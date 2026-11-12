@@ -76,8 +76,25 @@ class _PrinterConnectPanel extends ConsumerStatefulWidget {
 }
 
 class _PrinterConnectPanelState extends ConsumerState<_PrinterConnectPanel> {
+  bool _reconnecting = false;
+
   void _refresh() {
     if (mounted) setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_tryRestoreUsb);
+  }
+
+  Future<void> _tryRestoreUsb() async {
+    final s = ref.read(settingsProvider);
+    final printer = ref.read(printerServiceProvider);
+    if (s.printerType != PrinterType.usb || s.usbVendorId == 0 || printer.usbIsConnected) return;
+    setState(() => _reconnecting = true);
+    await printer.reconnectUsbPrinter();
+    if (mounted) setState(() => _reconnecting = false);
   }
 
   @override
@@ -92,9 +109,49 @@ class _PrinterConnectPanelState extends ConsumerState<_PrinterConnectPanel> {
       if (v != null) onSave(v);
     }
 
+    String statusLine() {
+      switch (s.printerType) {
+        case PrinterType.none:
+          return 'Printing is off';
+        case PrinterType.usb:
+          if (printer.usbIsConnected) {
+            return printer.usbPrinter?.label ?? 'USB printer connected';
+          }
+          if (_reconnecting) return 'Reconnecting to saved USB printer…';
+          if (s.usbVendorId != 0) {
+            return 'Saved USB ${s.usbVendorId.toRadixString(16).padLeft(4, '0')}:${s.usbProductId.toRadixString(16).padLeft(4, '0')} — tap Connect if needed';
+          }
+          return 'No USB printer paired yet';
+        case PrinterType.network:
+          return s.printerHost.trim().isEmpty
+              ? 'No network printer IP set'
+              : 'Network ${s.printerHost.trim()}:${s.printerPort}';
+        case PrinterType.system:
+          return 'System print dialog';
+        case PrinterType.bluetooth:
+          return 'Bluetooth (not available on web)';
+      }
+    }
+
+    final liveConnected = switch (s.printerType) {
+      PrinterType.usb => printer.usbIsConnected,
+      PrinterType.network => s.printerHost.trim().isNotEmpty,
+      PrinterType.system || PrinterType.bluetooth => true,
+      PrinterType.none => false,
+    };
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        ListTile(
+          leading: Icon(
+            liveConnected ? Icons.print : Icons.print_disabled_outlined,
+            color: liveConnected ? const Color(0xFF3DDC97) : Colors.white54,
+          ),
+          title: Text(liveConnected ? 'Ready' : 'Not connected', style: const TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: Text(statusLine()),
+        ),
+        const Divider(height: 1),
         RadioGroup<PrinterType>(
           groupValue: s.printerType,
           onChanged: (v) => set((x) => x.copyWith(printerType: v)),
@@ -125,7 +182,7 @@ class _PrinterConnectPanelState extends ConsumerState<_PrinterConnectPanel> {
         if (s.printerType == PrinterType.usb) ...[
           ListTile(
             leading: Icon(printer.usbIsConnected ? Icons.usb : Icons.usb_off),
-            title: Text(printer.usbIsConnected ? 'Connected' : 'Not connected'),
+            title: Text(printer.usbIsConnected ? 'Connected' : (_reconnecting ? 'Reconnecting…' : 'Not connected')),
             subtitle: Text(() {
               if (printer.usbPrinter != null) return printer.usbPrinter!.label;
               if (s.usbVendorId != 0) {

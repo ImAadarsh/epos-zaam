@@ -43,6 +43,8 @@ class CashPaymentDetails extends StatelessWidget {
     final theme = Theme.of(context);
     final gap = compact ? 10.0 : 12.0;
     final pad = compact ? 12.0 : 14.0;
+    // Use start (not stretch): this strip often sits in a scroll view with
+    // unbounded height, where Row stretch collapses cells to zero on web.
     return Container(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
@@ -53,7 +55,7 @@ class CashPaymentDetails extends StatelessWidget {
       ),
       padding: EdgeInsets.all(pad),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(child: _cell(context, 'Amount to Pay', formatPence(amountDuePence))),
           SizedBox(width: gap),
@@ -381,7 +383,10 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
       ],
     );
 
+    // No Spacer/Expanded here — this column sits inside IntrinsicHeight / scroll
+    // children where flex widgets collapse to zero height on Flutter web.
     final sidePanel = Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(
@@ -400,7 +405,7 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
             ),
           ),
         ),
-        const Spacer(),
+        SizedBox(height: shortViewport ? 16 : 24),
         if (_change > 0) ...[
           changeBanner(),
           SizedBox(height: shortViewport ? 12 : 16),
@@ -428,6 +433,8 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
       actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
       actionsAlignment: MainAxisAlignment.spaceBetween,
       title: const Text('Cash payment', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 26)),
+      // Do NOT wrap scroll content in Flexible/Expanded inside a min-height Column —
+      // AlertDialog on Flutter web then allocates 0 height and the body paints empty.
       content: SizedBox(
         width: dialogW,
         child: ConstrainedBox(
@@ -451,62 +458,54 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
               }
               return KeyEventResult.ignored;
             },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        CashPaymentDetails(amountDuePence: widget.amountDuePence, paidPence: _paid),
-                        SizedBox(height: shortViewport ? 14 : 18),
-                        CashNoteBar(onNote: _addNote, height: noteH),
-                        SizedBox(height: shortViewport ? 14 : 18),
-                        // Till layout: keypad + Exact / change side-by-side on wide dialogs.
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final sideBySide = constraints.maxWidth >= 720;
-                            if (!sideBySide) {
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Align(
-                                    alignment: Alignment.centerRight,
-                                    child: TextButton(
-                                      onPressed: _exact,
-                                      child: Text(
-                                        'Exact ${formatPence(widget.amountDuePence)}',
-                                        style: const TextStyle(color: ZaamColors.gold, fontWeight: FontWeight.w700, fontSize: 16),
-                                      ),
-                                    ),
-                                  ),
-                                  keypad,
-                                  if (_change > 0) ...[
-                                    const SizedBox(height: 12),
-                                    changeBanner(),
-                                  ],
-                                ],
-                              );
-                            }
-                            return IntrinsicHeight(
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Expanded(flex: 5, child: keypad),
-                                  const SizedBox(width: 20),
-                                  Expanded(flex: 4, child: sidePanel),
-                                ],
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  CashPaymentDetails(amountDuePence: widget.amountDuePence, paidPence: _paid),
+                  SizedBox(height: shortViewport ? 14 : 18),
+                  CashNoteBar(onNote: _addNote, height: noteH),
+                  SizedBox(height: shortViewport ? 14 : 18),
+                  // Till layout: keypad + Exact / change side-by-side on wide dialogs.
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final sideBySide = constraints.maxWidth >= 720;
+                      if (!sideBySide) {
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: _exact,
+                                child: Text(
+                                  'Exact ${formatPence(widget.amountDuePence)}',
+                                  style: const TextStyle(color: ZaamColors.gold, fontWeight: FontWeight.w700, fontSize: 16),
+                                ),
                               ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
+                            ),
+                            keypad,
+                            if (_change > 0) ...[
+                              const SizedBox(height: 12),
+                              changeBanner(),
+                            ],
+                          ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 5, child: keypad),
+                          const SizedBox(width: 20),
+                          Expanded(flex: 4, child: sidePanel),
+                        ],
+                      );
+                    },
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

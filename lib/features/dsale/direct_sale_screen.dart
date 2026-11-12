@@ -4,13 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/audio/till_click.dart';
+import '../../core/hardware/printer/printer_service.dart';
 import '../../core/security/permissions.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../../core/widgets/dialogs.dart';
 import '../../core/widgets/manager_override.dart';
 import '../../data/models/sale.dart';
+import '../../data/models/settings.dart';
 import '../../data/repositories/sales_repository.dart';
+import '../../data/repositories/settings_repository.dart';
 import '../../data/repositories/shift_repository.dart';
 import '../register/open_register_card.dart';
 import '../shell/app_shell.dart';
@@ -38,8 +41,27 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
   bool _busy = false;
   String? _flash;
   bool _flashError = false;
+  /// Bumps when USB reconnect / dialog closes so AppBar printer chip refreshes.
+  int _printerTick = 0;
 
   int get _pence => int.tryParse(_digits) ?? 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // WebUSB drops the live handle on reload; re-open the saved device so the
+    // header / dialog show the previously paired printer again.
+    Future.microtask(_restorePrinterSession);
+  }
+
+  Future<void> _restorePrinterSession() async {
+    final s = ref.read(settingsProvider);
+    if (s.printerType != PrinterType.usb || s.usbVendorId == 0) return;
+    final printer = ref.read(printerServiceProvider);
+    if (printer.usbIsConnected) return;
+    await printer.reconnectUsbPrinter();
+    if (mounted) setState(() => _printerTick++);
+  }
 
   String get _display => (_pence / 100).toStringAsFixed(2);
 
@@ -226,14 +248,33 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
     ref.read(shellTabProvider.notifier).go(0);
   }
 
+  bool _printerReady(PosSettings s, PrinterService printer) {
+    switch (s.printerType) {
+      case PrinterType.none:
+        return false;
+      case PrinterType.usb:
+        return printer.usbIsConnected || s.usbVendorId != 0;
+      case PrinterType.network:
+        return s.printerHost.trim().isNotEmpty;
+      case PrinterType.system:
+      case PrinterType.bluetooth:
+        return true;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final shift = ref.watch(shiftProvider);
     // Rebuild when local sales change so the left list + last-receipt label stay live.
     ref.watch(localSalesProvider);
+    final settings = ref.watch(settingsProvider);
+    // Keep analyzer/lints happy: tick is only used to force rebuild after reconnect.
+    final _ = _printerTick;
     final recent = ref.read(dSaleServiceProvider).recentSales(limit: 10);
     final lastPrintable = recent.isNotEmpty ? recent.first : null;
     final theme = Theme.of(context);
+    final printer = ref.read(printerServiceProvider);
+    final printerReady = _printerReady(settings, printer);
 
     final appBar = AppBar(
       leading: IconButton(
@@ -242,14 +283,40 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
         onPressed: _backToModules,
       ),
       title: const Text('Direct Sale'),
+      actionsIconTheme: const IconThemeData(color: Colors.white),
       actions: [
-        IconButton(
-          tooltip: 'Printer',
-          icon: const Icon(Icons.print_outlined),
-          onPressed: () {
-            _click();
-            showPrinterConnectDialog(context);
-          },
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: Tooltip(
+            message: printerReady
+                ? 'Printer connected — tap to manage'
+                : 'Printer not connected — tap to connect',
+            child: TextButton.icon(
+              onPressed: () async {
+                _click();
+                await showPrinterConnectDialog(context);
+                if (mounted) setState(() => _printerTick++);
+              },
+              icon: Icon(
+                printerReady ? Icons.print : Icons.print_outlined,
+                color: printerReady ? ZaamColors.green : Colors.white70,
+                size: 22,
+              ),
+              label: Text(
+                printerReady ? 'Printer' : 'No printer',
+                style: TextStyle(
+                  color: printerReady ? ZaamColors.green : Colors.white70,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                minimumSize: const Size(0, 40),
+              ),
+            ),
+          ),
         ),
         const ShellStatusActions(),
       ],
