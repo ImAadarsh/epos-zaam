@@ -16,6 +16,7 @@ import '../register/open_register_card.dart';
 import '../shell/app_shell.dart';
 import '../shell/status_bar.dart';
 import 'dsale_service.dart';
+import 'printer_connect_dialog.dart';
 
 void _click() => TillClick.play();
 
@@ -235,7 +236,17 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
         onPressed: _backToModules,
       ),
       title: const Text('Direct Sale'),
-      actions: const [ShellStatusActions()],
+      actions: [
+        IconButton(
+          tooltip: 'Printer',
+          icon: const Icon(Icons.print_outlined),
+          onPressed: () {
+            _click();
+            showPrinterConnectDialog(context);
+          },
+        ),
+        const ShellStatusActions(),
+      ],
       backgroundColor: const Color(0xFF161B22),
       foregroundColor: Colors.white,
       titleTextStyle: theme.textTheme.titleLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w600),
