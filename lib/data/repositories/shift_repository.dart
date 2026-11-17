@@ -159,6 +159,7 @@ class ShiftController extends Notifier<ShiftState?> {
   }
 
   /// X-read: server figures when online and synced, otherwise computed from this device.
+  /// Default Ethos behaviour = current open shift only (not a calendar window).
   Future<ShiftReport?> report() async {
     final shift = state;
     if (shift == null) return null;
@@ -176,6 +177,20 @@ class ShiftController extends Notifier<ShiftState?> {
       }
     }
     return _localReport(shift);
+  }
+
+  /// Historical / custom from–to X-read for the current register (`GET /api/pos/reports/x-read`).
+  Future<ShiftReport> rangeReport({required DateTime from, required DateTime to}) async {
+    final registerId = ref.read(sessionProvider).registerId;
+    if (registerId == null || registerId.isEmpty) {
+      throw StateError('No register selected');
+    }
+    final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/reports/x-read', query: {
+      'registerId': registerId,
+      'from': from.toUtc().toIso8601String(),
+      'to': to.toUtc().toIso8601String(),
+    }) as Map);
+    return ShiftReport.fromServer(res);
   }
 
   ShiftReport _localReport(ShiftState shift, {int? countedPence}) {

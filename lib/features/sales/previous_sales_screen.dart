@@ -4,12 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/hardware/printer/printer_service.dart';
+import '../../core/hardware/printer/receipt.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/scanner/camera_scanner.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/widgets/dialogs.dart';
 import '../../data/models/sale.dart';
+import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/sales_repository.dart';
 import '../../data/repositories/session.dart';
 import '../shell/app_shell.dart';
@@ -157,6 +161,82 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
 
   void _open(SaleSummary s) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => SaleDetailScreen(code: s.code)));
 
+  Future<void> _printFiltered() async {
+    final session = ref.read(sessionProvider);
+    final registerId = _scope == _Scope.thisRegister ? session.registerId : null;
+    final day = _day;
+    final search = _search.text.trim();
+    try {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(content: Row(children: [CircularProgressIndicator(), SizedBox(width: 20), Text('Preparing print…')])),
+      );
+      final res = Map<String, dynamic>.from(await ref.read(apiClientProvider).get('/api/pos/sales/summary', query: {
+        'search': search.isEmpty ? null : search,
+        'registerId': registerId,
+        'from': day == null ? null : DateTime(day.year, day.month, day.day).toUtc().toIso8601String(),
+        'to': day == null ? null : DateTime(day.year, day.month, day.day, 23, 59, 59).toUtc().toIso8601String(),
+        'sampleLimit': 40,
+      }) as Map);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+
+      final byStatus = ((res['byStatus'] as List?) ?? []).map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return (
+          status: '${m['status']}',
+          count: (m['count'] as num?)?.toInt() ?? 0,
+          amountPence: toPence(m['amount'] as num?),
+        );
+      }).toList();
+      final byPayment = ((res['byPayment'] as List?) ?? []).map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return (
+          method: '${m['method']}',
+          count: (m['count'] as num?)?.toInt() ?? 0,
+          amountPence: toPence(m['amount'] as num?),
+        );
+      }).toList();
+      final sample = ((res['sample'] as List?) ?? []).map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return (
+          receipt: '${m['receiptNumber'] ?? m['orderNumber']}',
+          soldAt: DateTime.tryParse('${m['soldAt']}')?.toLocal() ?? DateTime.now(),
+          totalPence: toPence(m['total'] as num?),
+          status: '${m['status'] ?? 'completed'}',
+        );
+      }).toList();
+
+      final registerLabel = _scope == _Scope.all
+          ? 'All registers'
+          : (ref.read(currentRegisterProvider)?.name ?? 'This register');
+      final dayLabel = day == null ? 'Any date' : DateFormat('EEE d MMM yyyy').format(day);
+      final doc = buildSalesListReceipt(
+        totalCount: (res['totalCount'] as num?)?.toInt() ?? 0,
+        netPence: toPence(res['netSales'] as num?),
+        voidedPence: toPence(res['voidedAmount'] as num?),
+        refundedPence: toPence(res['refundedAmount'] as num?),
+        byStatus: byStatus,
+        byPayment: byPayment,
+        sample: sample,
+        sampleLimit: (res['sampleLimit'] as num?)?.toInt() ?? 40,
+        registerLabel: registerLabel,
+        dayLabel: dayLabel,
+        search: search.isEmpty ? null : search,
+        orgName: ref.read(receiptOrgProvider)?.name,
+      );
+      await ref.read(printerServiceProvider).print(doc, jobName: 'Previous Sales');
+      if (mounted) showMessage(context, 'Sales report sent to printer');
+    } catch (e) {
+      if (mounted) {
+        final nav = Navigator.of(context, rootNavigator: true);
+        if (nav.canPop()) nav.pop();
+        showMessage(context, 'Print failed: ${errorMessage(e)}', error: true);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Race fix: shell IndexedStack mounts this screen before register may be set;
@@ -192,6 +272,11 @@ class _PreviousSalesScreenState extends ConsumerState<PreviousSalesScreen> {
         automaticallyImplyLeading: !widget.embedded,
         title: const Text('Previous Sales'),
         actions: [
+          IconButton(
+            tooltip: 'Print filtered sales',
+            onPressed: _loading ? null : _printFiltered,
+            icon: const Icon(Icons.print_outlined),
+          ),
           IconButton(
             tooltip: 'Refund transaction',
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RefundScreen())),

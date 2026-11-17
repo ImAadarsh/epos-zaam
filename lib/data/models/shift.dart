@@ -99,6 +99,9 @@ class ShiftReport {
     this.countedCashPence,
     this.variancePence,
     this.source = 'server',
+    this.isRange = false,
+    this.rangeFrom,
+    this.rangeTo,
   });
 
   final String type;
@@ -130,12 +133,18 @@ class ShiftReport {
   /// `server` or `device` (computed offline from this device's sales).
   final String source;
 
+  /// True when figures come from [GET /api/pos/reports/x-read] (custom from–to), not the open shift.
+  final bool isRange;
+  final DateTime? rangeFrom;
+  final DateTime? rangeTo;
+
   int get averageSalePence => salesCount == 0 ? 0 : (netPence / salesCount).round();
 
   factory ShiftReport.fromServer(Map<String, dynamic> j) {
     final cm = j['cashMovements'] is Map ? Map<String, dynamic>.from(j['cashMovements'] as Map) : <String, dynamic>{};
     final refunds = j['refunds'] is Map ? Map<String, dynamic>.from(j['refunds'] as Map) : <String, dynamic>{};
     final voids = j['voids'] is Map ? Map<String, dynamic>.from(j['voids'] as Map) : <String, dynamic>{};
+    final isRange = j['range'] == true || j['rangeFrom'] != null;
     return ShiftReport(
       type: '${j['type'] ?? 'X'}',
       openedAt: DateTime.tryParse('${j['openedAt']}')?.toLocal() ?? DateTime.now(),
@@ -177,6 +186,9 @@ class ShiftReport {
       expectedCashPence: toPence(j['expectedCash'] as num?),
       countedCashPence: j['countedCash'] == null ? null : toPence(j['countedCash'] as num),
       variancePence: j['cashVariance'] == null ? null : toPence(j['cashVariance'] as num),
+      isRange: isRange,
+      rangeFrom: j['rangeFrom'] != null ? DateTime.tryParse('${j['rangeFrom']}')?.toLocal() : null,
+      rangeTo: j['rangeTo'] != null ? DateTime.tryParse('${j['rangeTo']}')?.toLocal() : null,
     );
   }
 }

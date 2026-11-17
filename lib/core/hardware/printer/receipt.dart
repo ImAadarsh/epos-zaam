@@ -155,10 +155,15 @@ ReceiptDoc buildShiftReportReceipt(ShiftReport r, {String? registerName, OrgInfo
   final isZ = r.type.toUpperCase() == 'Z';
   final rows = <ReceiptRow>[
     ReceiptRow(org?.name ?? 'Zaam', '', ReceiptStyle.large),
-    ReceiptRow(isZ ? 'Z-READ (END OF DAY)' : 'X-READ', '', ReceiptStyle.centerBold),
+    ReceiptRow(isZ ? 'Z-READ (END OF DAY)' : (r.isRange ? 'X-READ (RANGE)' : 'X-READ'), '', ReceiptStyle.centerBold),
     if (registerName != null) ReceiptRow('Register', registerName),
-    ReceiptRow('Opened', _date.format(r.openedAt)),
-    if (r.closedAt != null) ReceiptRow('Closed', _date.format(r.closedAt!)),
+    if (r.isRange && r.rangeFrom != null && r.rangeTo != null) ...[
+      ReceiptRow('From', _date.format(r.rangeFrom!)),
+      ReceiptRow('To', _date.format(r.rangeTo!)),
+    ] else ...[
+      ReceiptRow('Opened', _date.format(r.openedAt)),
+      if (r.closedAt != null) ReceiptRow('Closed', _date.format(r.closedAt!)),
+    ],
     ReceiptRow('Printed', _date.format(r.generatedAt)),
     const ReceiptRow('', '', ReceiptStyle.divider),
     ReceiptRow('Sales', '${r.salesCount}'),
@@ -194,6 +199,58 @@ ReceiptDoc buildShiftReportReceipt(ShiftReport r, {String? registerName, OrgInfo
       for (final s in r.staff) ReceiptRow('${s.name} x${s.count}', formatPence(s.amountPence)),
     ],
     if (r.source != 'server') const ReceiptRow('Calculated on this device (offline)', '', ReceiptStyle.small),
+  ];
+  return ReceiptDoc(rows: rows);
+}
+
+/// Previous Sales filtered summary for the till printer.
+ReceiptDoc buildSalesListReceipt({
+  required int totalCount,
+  required int netPence,
+  required int voidedPence,
+  required int refundedPence,
+  required List<({String status, int count, int amountPence})> byStatus,
+  required List<({String method, int count, int amountPence})> byPayment,
+  required List<({String receipt, DateTime soldAt, int totalPence, String status})> sample,
+  required int sampleLimit,
+  String? registerLabel,
+  String? dayLabel,
+  String? search,
+  String? orgName,
+}) {
+  final rows = <ReceiptRow>[
+    ReceiptRow(orgName ?? 'Zaam', '', ReceiptStyle.large),
+    const ReceiptRow('PREVIOUS SALES', '', ReceiptStyle.centerBold),
+    if (registerLabel != null && registerLabel.isNotEmpty) ReceiptRow('Register', registerLabel),
+    if (dayLabel != null && dayLabel.isNotEmpty) ReceiptRow('Date', dayLabel),
+    if (search != null && search.isNotEmpty) ReceiptRow('Search', search),
+    ReceiptRow('Printed', _date.format(DateTime.now())),
+    const ReceiptRow('', '', ReceiptStyle.divider),
+    ReceiptRow('Sales found', '$totalCount', ReceiptStyle.bold),
+    ReceiptRow('Net sales', formatPence(netPence), ReceiptStyle.bold),
+    if (voidedPence > 0) ReceiptRow('Voided', formatPence(voidedPence)),
+    if (refundedPence > 0) ReceiptRow('Refunded', '-${formatPence(refundedPence)}'),
+    if (byStatus.isNotEmpty) ...[
+      const ReceiptRow('', '', ReceiptStyle.divider),
+      const ReceiptRow('BY STATUS', '', ReceiptStyle.bold),
+      for (final s in byStatus) ReceiptRow('${s.status} x${s.count}', formatPence(s.amountPence)),
+    ],
+    if (byPayment.isNotEmpty) ...[
+      const ReceiptRow('', '', ReceiptStyle.divider),
+      const ReceiptRow('BY PAYMENT', '', ReceiptStyle.bold),
+      for (final p in byPayment) ReceiptRow('${p.method} x${p.count}', formatPence(p.amountPence)),
+    ],
+    if (sample.isNotEmpty) ...[
+      const ReceiptRow('', '', ReceiptStyle.divider),
+      ReceiptRow(totalCount > sample.length ? 'RECENT (first ${sample.length})' : 'SALES', '', ReceiptStyle.bold),
+      for (final s in sample)
+        ReceiptRow(
+          '${_date.format(s.soldAt)} ${s.receipt}',
+          '${formatPence(s.totalPence)}${s.status == 'completed' ? '' : ' ${s.status}'}',
+          ReceiptStyle.small,
+        ),
+      if (totalCount > sample.length) ReceiptRow('+ ${totalCount - sample.length} more not printed', '', ReceiptStyle.small),
+    ],
   ];
   return ReceiptDoc(rows: rows);
 }
