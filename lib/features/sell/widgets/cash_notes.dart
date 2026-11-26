@@ -522,8 +522,12 @@ class _CashTenderDialogState extends State<_CashTenderDialog> {
         FilledButton(
           onPressed: _canComplete
               ? () {
-                  _click();
-                  Navigator.pop(context, _paid);
+                  // Capture before click sound — never let audio/haptics block completing the sale.
+                  final paid = _paid;
+                  try {
+                    _click();
+                  } catch (_) {}
+                  Navigator.pop(context, paid);
                 }
               : null,
           style: FilledButton.styleFrom(

@@ -24,9 +24,13 @@ class CheckoutService {
   final Ref ref;
 
   Future<SaleRecord> complete({required List<SalePayment> payments, int tipPence = 0}) async {
+    final session = ref.read(sessionProvider);
+    if (!session.isLoggedIn) {
+      await ref.read(sessionProvider.notifier).forceLogout(reason: 'Not signed in during checkout');
+      throw StateError('Session ended — sign in again');
+    }
     final cart = ref.read(cartProvider);
     final totals = ref.read(cartTotalsProvider);
-    final session = ref.read(sessionProvider);
     final register = ref.read(currentRegisterProvider);
     final staff = ref.read(currentStaffProvider);
     final shift = ref.read(shiftProvider);
@@ -95,7 +99,8 @@ class CheckoutService {
 
     final settings = ref.read(settingsProvider);
     if (settings.openDrawerOnCash && payments.any((p) => p.method == PaymentMethod.cash)) {
-      ref.read(printerServiceProvider).openDrawer().catchError((Object e) => AppLog.warn('Drawer: $e'));
+      // Await so failures are logged (and visible in the browser console on web).
+      await ref.read(printerServiceProvider).tryOpenDrawer();
     }
     return sale;
   }
@@ -110,7 +115,15 @@ class CheckoutService {
 
   Future<void> printReceipt(SaleRecord sale, {bool copy = false}) {
     final settings = ref.read(settingsProvider);
-    final doc = buildSaleReceipt(sale, org: ref.read(receiptOrgProvider), footer: settings.receiptFooter, copy: copy);
+    final cash = sale.payments.any((p) => p.method == PaymentMethod.cash);
+    final doc = buildSaleReceipt(
+      sale,
+      org: ref.read(receiptOrgProvider),
+      footer: settings.receiptFooter,
+      copy: copy,
+      // Kick drawer again with the receipt bytes (USB/network ESC/POS) on cash originals.
+      openDrawer: !copy && settings.openDrawerOnCash && cash,
+    );
     return ref.read(printerServiceProvider).print(doc, jobName: 'Receipt ${sale.receiptNumber}');
   }
 

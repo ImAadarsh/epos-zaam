@@ -22,7 +22,21 @@ class EscPosEncoder {
   void size(int w, int h) => _b.add([_gs, 0x21, ((w - 1) << 4) | (h - 1)]);
   void feed([int lines = 1]) => _b.add([_esc, 0x64, lines]);
   void cut() => _b.add([_gs, 0x56, 0x42, 0x00]);
-  void openDrawer() => _b.add([_esc, 0x70, 0x00, 0x19, 0xFA]);
+
+  /// Cash-drawer kick via the printer DK (RJ11/RJ12) port.
+  ///
+  /// Sends both ESC/POS pin pulses (Epson / Star ESC/POS mode) and Star Line
+  /// Mode BEL — covers Star TSP100 / TSP143IIIU+ and common SAM4S drawers
+  /// whether the printer is in ESC/POS or Star Line mode.
+  void openDrawer() {
+    // ESC/POS: ESC p m t1 t2 — pin 2 then pin 5 (drawer wiring varies).
+    // Pulse ~100ms / 500ms so the solenoid has time to fire.
+    _b.add([_esc, 0x70, 0x00, 0x32, 0xFA]);
+    _b.add([_esc, 0x70, 0x01, 0x32, 0xFA]);
+    // Star Line Mode / StarPRNT: BEL and ESC BEL
+    _b.addByte(0x07);
+    _b.add([_esc, 0x07]);
+  }
 
   void text(String s) {
     _b.add(_encode(s));
@@ -130,13 +144,17 @@ class EscPosEncoder {
       e.align(0);
     }
     e.feed(4);
+    // Kick again at the end — some Star TSP100 units ignore an early-only pulse.
+    if (doc.openDrawer) e.openDrawer();
     if (cutPaper) e.cut();
     return e.bytes();
   }
 
-  /// Just the drawer kick (for "No sale").
+  /// Just the drawer kick (for "No sale" / Test open drawer / cash sales).
+  /// Init + dual-mode kick + short feed so the USB buffer flushes cleanly.
   static Uint8List drawerOnly() => (EscPosEncoder()
         ..init()
-        ..openDrawer())
+        ..openDrawer()
+        ..feed(1))
       .bytes();
 }

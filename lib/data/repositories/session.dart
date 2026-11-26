@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/network/api_client.dart';
+import '../../core/security/jwt.dart';
 import '../../core/security/pin.dart';
 import '../../core/storage/local_db.dart';
 import '../../core/utils/app_log.dart';
@@ -71,7 +72,8 @@ class SessionState {
   /// on a device signed in with a cashier account.
   final String? staffToken;
 
-  bool get isLoggedIn => accessToken != null && user != null;
+  /// Device is signed in only when both a usable access token and user profile exist.
+  bool get isLoggedIn => hasUsableToken(accessToken) && user != null;
 
   SessionState copyWith({
     String? baseUrl,
@@ -81,6 +83,7 @@ class SessionState {
     String? registerId,
     String? staffId,
     bool clearStaff = false,
+    bool clearAuth = false,
     bool? locked,
     DateTime? lastActiveAt,
     String? staffToken,
@@ -89,14 +92,14 @@ class SessionState {
       SessionState(
         baseUrl: baseUrl ?? this.baseUrl,
         deviceId: deviceId,
-        accessToken: accessToken ?? this.accessToken,
-        refreshToken: refreshToken ?? this.refreshToken,
-        user: user ?? this.user,
+        accessToken: clearAuth ? null : (accessToken ?? this.accessToken),
+        refreshToken: clearAuth ? null : (refreshToken ?? this.refreshToken),
+        user: clearAuth ? null : (user ?? this.user),
         registerId: registerId ?? this.registerId,
-        staffId: clearStaff ? null : (staffId ?? this.staffId),
+        staffId: clearStaff || clearAuth ? null : (staffId ?? this.staffId),
         locked: locked ?? this.locked,
         lastActiveAt: lastActiveAt ?? this.lastActiveAt,
-        staffToken: clearStaffToken ? null : (staffToken ?? this.staffToken),
+        staffToken: clearStaffToken || clearAuth ? null : (staffToken ?? this.staffToken),
       );
 
   Map<String, dynamic> toJson() => {
@@ -121,18 +124,23 @@ class SessionController extends Notifier<SessionState> {
     final lastActive = DateTime.tryParse('${j['lastActiveAt'] ?? ''}');
     final autoLock = (init.settings?['autoLockSeconds'] as num?)?.toInt() ?? 0;
     final idleExpired = autoLock > 0 && (lastActive == null || DateTime.now().difference(lastActive).inSeconds >= autoLock);
+    final access = j['accessToken'] as String?;
+    final refresh = j['refreshToken'] as String?;
+    final user = j['user'] is Map ? SessionUser.fromJson(Map<String, dynamic>.from(j['user'] as Map)) : null;
+    // Drop a half-broken persisted session (user without token, or empty token).
+    final usable = hasUsableToken(access) && user != null;
     return SessionState(
       baseUrl: (j['baseUrl'] as String?) ?? AppConfig.defaultApiBaseUrl,
       deviceId: init.deviceId,
-      accessToken: j['accessToken'] as String?,
-      refreshToken: j['refreshToken'] as String?,
-      user: j['user'] is Map ? SessionUser.fromJson(Map<String, dynamic>.from(j['user'] as Map)) : null,
-      registerId: j['registerId'] as String?,
-      staffId: j['staffId'] as String?,
+      accessToken: usable ? access : null,
+      refreshToken: usable ? refresh : null,
+      user: usable ? user : null,
+      registerId: usable ? j['registerId'] as String? : null,
+      staffId: usable ? j['staffId'] as String? : null,
       // A reload keeps the till as it was (unlocked after sign-in) unless it was locked or idle too long.
-      locked: j['locked'] != false || j['staffId'] == null || idleExpired,
+      locked: !usable || j['locked'] != false || j['staffId'] == null || idleExpired,
       lastActiveAt: lastActive,
-      staffToken: j['staffToken'] as String?,
+      staffToken: usable ? j['staffToken'] as String? : null,
     );
   }
 
@@ -170,8 +178,43 @@ class SessionController extends Notifier<SessionState> {
   }
 
   Future<void> updateAccessToken(String token) async {
+    if (!hasUsableToken(token)) {
+      await forceLogout(reason: 'Access token refresh returned empty');
+      return;
+    }
     state = state.copyWith(accessToken: token);
     await _persist();
+  }
+
+  /// Clears ERP auth and returns the till to the sign-in screen (RootGate).
+  Future<void> forceLogout({String reason = 'Session ended'}) async {
+    if (!state.isLoggedIn && state.user == null && !hasUsableToken(state.accessToken)) {
+      return;
+    }
+    AppLog.warn('Signed out: $reason');
+    state = SessionState(baseUrl: state.baseUrl, deviceId: state.deviceId);
+    await _persist();
+  }
+
+  /// If tokens are missing or past JWT expiry (refresh also dead), force sign-in.
+  /// Safe to call from UI / timers; no-ops when still valid.
+  Future<void> ensureAuthValid() async {
+    if (!hasUsableToken(state.accessToken) || state.user == null) {
+      if (state.user != null || hasUsableToken(state.refreshToken)) {
+        await forceLogout(reason: 'Missing access token — sign in again');
+      }
+      return;
+    }
+    final access = state.accessToken!;
+    if (!isJwtExpired(access, skew: const Duration(seconds: 60))) return;
+
+    final refresh = state.refreshToken;
+    if (!hasUsableToken(refresh) || isJwtExpired(refresh!, skew: Duration.zero)) {
+      await forceLogout(reason: 'Session expired — sign in again');
+      return;
+    }
+    // Access expired but refresh looks usable — ApiClient will refresh on the next call.
+    AppLog.info('Access token expired; will refresh on next API call');
   }
 
   Future<void> selectRegister(String registerId) async {
@@ -214,10 +257,7 @@ class SessionController extends Notifier<SessionState> {
     await _persist();
   }
 
-  Future<void> logout() async {
-    state = SessionState(baseUrl: state.baseUrl, deviceId: state.deviceId);
-    await _persist();
-  }
+  Future<void> logout() => forceLogout(reason: 'Signed out');
 }
 
 final sessionProvider = NotifierProvider<SessionController, SessionState>(SessionController.new);
@@ -233,6 +273,10 @@ final apiClientProvider = Provider<ApiClient>((ref) {
     },
     staffToken: () => ref.read(pinVerifierProvider).overrideToken ?? ref.read(sessionProvider).staffToken,
     onRefreshed: (token) => ref.read(sessionProvider.notifier).updateAccessToken(token),
-    onUnauthorized: () => AppLog.warn('API returned 401 after refresh; sign in again from Settings'),
+    onUnauthorized: () {
+      AppLog.warn('API returned 401 after refresh — forcing sign-in');
+      // Microtask so the Dio interceptor can finish without awaiting persistence.
+      Future.microtask(() => ref.read(sessionProvider.notifier).forceLogout(reason: 'Session expired — sign in again'));
+    },
   );
 });

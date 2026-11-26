@@ -7,6 +7,7 @@ import '../../core/security/permissions.dart';
 import '../../core/utils/money.dart';
 import '../../core/widgets/dialogs.dart';
 import '../../core/widgets/manager_override.dart';
+import '../../core/widgets/onscreen_keyboard.dart';
 import '../../data/models/shift.dart';
 import '../../data/repositories/bootstrap_repository.dart';
 import '../../data/repositories/sales_repository.dart';
@@ -38,15 +39,31 @@ class RegisterScreen extends ConsumerWidget {
 
   Future<void> _movement(BuildContext context, WidgetRef ref, String type, String title) async {
     if (!await requirePermission(context, ref, Perm.cashMovement) || !context.mounted) return;
-    final amount = await promptAmount(context, title: title, allowZero: false);
+    // Reason / info first (full on-screen keyboard), then amount — matches till workflow.
+    final reasonHint = switch (type) {
+      'paid_out' => 'e.g. milk, window cleaner, supplier',
+      'drop' => 'e.g. safe drop, bank bag',
+      _ => 'e.g. change top-up, float top-up',
+    };
+    final reason = await promptTextWithKeyboard(
+      context,
+      title: '$title — reason / info',
+      subtitle: 'Enter a short note before the amount',
+      hint: reasonHint,
+      allowEmpty: true,
+      confirmLabel: 'Next — amount',
+    );
+    if (reason == null || !context.mounted) return;
+    final amount = await promptAmount(context, title: title, message: reason.isEmpty ? null : 'Reason: $reason', allowZero: false);
     if (amount == null || !context.mounted) return;
-    final reason = await promptText(context, title: 'Reason', hint: type == 'paid_out' ? 'e.g. milk, window cleaner' : 'e.g. change top-up', allowEmpty: true, confirmLabel: 'Record');
-    if (reason == null) return;
     await ref.read(shiftProvider.notifier).cashMovement(type, amount, reason.isEmpty ? null : reason);
     try {
       await ref.read(printerServiceProvider).openDrawer();
     } catch (_) {}
-    if (context.mounted) showMessage(context, '$title ${formatPence(amount)} recorded');
+    if (context.mounted) {
+      final note = reason.isEmpty ? '' : ' · $reason';
+      showMessage(context, '$title ${formatPence(amount)} recorded$note');
+    }
   }
 
   Future<void> _noSale(BuildContext context, WidgetRef ref) async {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:printing/printing.dart';
 
@@ -111,6 +113,7 @@ class PrinterService {
   /// Kicks the cash drawer (drawer is wired to the receipt printer's kick port).
   Future<void> openDrawer() async {
     final s = _settings();
+    AppLog.info('Drawer kick via ${s.printerType.name}');
     switch (s.printerType) {
       case PrinterType.network:
         if (s.printerHost.trim().isEmpty) {
@@ -120,8 +123,31 @@ class PrinterService {
       case PrinterType.usb:
         await _ensureUsb();
         await sendUsb(EscPosEncoder.drawerOnly());
-      default:
+      case PrinterType.system:
+        throw PrinterException(
+          'Cash drawer cannot open with “System print dialog”. '
+          'Set Printer to USB ESC/POS (Chrome) and connect the printer, then try again.',
+        );
+      case PrinterType.none:
+      case PrinterType.bluetooth:
         throw PrinterException('A cash drawer needs a USB or network ESC/POS printer in Settings → Printer.');
+    }
+    AppLog.info('Drawer kick sent OK');
+  }
+
+  /// Best-effort kick used after cash sales. Returns null on success, else a short reason for the till UI.
+  /// Never hangs the till — USB/network stalls time out so Take cash can finish.
+  Future<String?> tryOpenDrawer({Duration timeout = const Duration(seconds: 3)}) async {
+    try {
+      await openDrawer().timeout(timeout);
+      return null;
+    } on TimeoutException {
+      AppLog.warn('Drawer: timed out after ${timeout.inSeconds}s');
+      return 'Drawer kick timed out — check USB printer connection';
+    } catch (e) {
+      final msg = e is PrinterException ? e.message : '$e';
+      AppLog.warn('Drawer: $msg');
+      return msg;
     }
   }
 

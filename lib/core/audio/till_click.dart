@@ -1,19 +1,19 @@
-import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'till_click_stub.dart' if (dart.library.js_interop) 'till_click_web.dart' as platform;
+
 /// Audible keypad "tip" for till buttons. [SystemSoundType.click] is silent on
-/// Flutter web / Chrome, so we play a short bundled WAV via audioplayers.
+/// Flutter web / Chrome, so web uses an HTML Audio element; native uses a WAV.
 class TillClick {
   TillClick._();
 
-  static final AudioPlayer _player = AudioPlayer()..setReleaseMode(ReleaseMode.stop);
   static bool _ready = false;
 
   static Future<void> _ensure() async {
     if (_ready) return;
     try {
-      await _player.setSource(AssetSource('sounds/click.wav'));
-      await _player.setVolume(0.55);
+      await platform.prepareClick();
       _ready = true;
     } catch (_) {
       // Fall through to SystemSound on platforms without the asset / plugin.
@@ -27,11 +27,15 @@ class TillClick {
       try {
         await _ensure();
         if (_ready) {
-          await _player.seek(Duration.zero);
-          await _player.resume();
+          await platform.playClick();
           return;
         }
-      } catch (_) {}
+      } catch (e) {
+        if (kDebugMode) {
+          // ignore: avoid_print
+          print('[TillClick] $e');
+        }
+      }
       SystemSound.play(SystemSoundType.click);
     }();
   }

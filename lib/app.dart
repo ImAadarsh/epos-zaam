@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -28,11 +30,33 @@ class ZaamEposApp extends ConsumerWidget {
 }
 
 /// Picks the screen from session state: sign in → choose register → PIN → till.
-class RootGate extends ConsumerWidget {
+class RootGate extends ConsumerStatefulWidget {
   const RootGate({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RootGate> createState() => _RootGateState();
+}
+
+class _RootGateState extends ConsumerState<RootGate> {
+  Timer? _authWatch;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(sessionProvider.notifier).ensureAuthValid());
+    _authWatch = Timer.periodic(const Duration(minutes: 1), (_) {
+      ref.read(sessionProvider.notifier).ensureAuthValid();
+    });
+  }
+
+  @override
+  void dispose() {
+    _authWatch?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
     final Widget child;
     if (!session.isLoggedIn) {

@@ -83,7 +83,15 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       return;
     }
 
-    final product = await _resolveProductForCode(code);
+    String? remoteMissHint;
+    Product? product;
+    try {
+      product = await _resolveProductForCode(code);
+    } on ApiException catch (e) {
+      if (e.statusCode == 404 && e.message.isNotEmpty) {
+        remoteMissHint = e.message;
+      }
+    }
     if (!mounted) return;
     if (product != null) {
       await addProductToCart(context, ref, product, fromScan: true);
@@ -98,10 +106,18 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     }
 
     SystemSound.play(SystemSoundType.alert);
+    final warehouseMiss = remoteMissHint != null &&
+        (remoteMissHint.toLowerCase().contains('warehouse') ||
+            remoteMissHint.toLowerCase().contains('stock record'));
+    if (warehouseMiss) {
+      showMessage(context, remoteMissHint!, error: true);
+      return;
+    }
     final add = await confirm(
       context,
       title: 'No product for "$code"',
-      message: 'Nothing matches this barcode or code on this till. Add it now with a manager PIN?',
+      message: remoteMissHint ??
+          'Nothing matches this barcode or code on this till. Add it now with a manager PIN?',
       confirmLabel: "Add Vt's.",
     );
     if (add && mounted) await openAddVariantScreen(context, ref, initialBarcode: code);
@@ -139,11 +155,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       return picked;
     }
 
-    try {
-      return await ref.read(catalogProvider.notifier).lookupRemote(code);
-    } catch (_) {
-      return null;
-    }
+    return await ref.read(catalogProvider.notifier).lookupRemote(code);
   }
 
   Future<void> _customerFromCode(String code) async {

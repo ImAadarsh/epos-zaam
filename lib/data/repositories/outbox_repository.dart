@@ -111,6 +111,11 @@ class OutboxController extends Notifier<OutboxState> {
             ref.read(onlineProvider.notifier).markOffline();
             break;
           }
+          if (e.statusCode == 401) {
+            AppLog.warn('Outbox hit 401 — forcing sign-in');
+            await ref.read(sessionProvider.notifier).forceLogout(reason: 'Session expired while syncing');
+            break;
+          }
           final attempts = entry.attempts + 1;
           final failed = e.isPermanent || attempts >= 5;
           await _update(entry.copyWith(attempts: attempts, status: failed ? OutboxStatus.failed : OutboxStatus.pending, lastError: e.message));

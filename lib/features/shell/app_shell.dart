@@ -83,7 +83,10 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   void _resetIdle() {
     _idle?.cancel();
-    ref.read(sessionProvider.notifier).touch();
+    final session = ref.read(sessionProvider.notifier);
+    session.touch();
+    // Re-check tokens on activity so a dead session cannot keep taking sales.
+    Future.microtask(session.ensureAuthValid);
     final secs = ref.read(settingsProvider).autoLockSeconds;
     if (secs > 0) _idle = Timer(Duration(seconds: secs), () => ref.read(sessionProvider.notifier).lock());
   }

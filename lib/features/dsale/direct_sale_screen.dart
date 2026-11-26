@@ -1,7 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../../core/audio/till_click.dart';
 import '../../core/hardware/printer/printer_service.dart';
@@ -10,21 +11,21 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../../core/widgets/dialogs.dart';
 import '../../core/widgets/manager_override.dart';
-import '../../data/models/sale.dart';
+import '../../core/widgets/onscreen_keyboard.dart';
 import '../../data/models/settings.dart';
 import '../../data/repositories/sales_repository.dart';
+import '../../data/repositories/session.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../data/repositories/shift_repository.dart';
 import '../register/open_register_card.dart';
 import '../shell/app_shell.dart';
 import '../shell/status_bar.dart';
 import '../sell/widgets/cash_notes.dart';
+import 'cash_drawer_dialog.dart';
 import 'dsale_service.dart';
 import 'printer_connect_dialog.dart';
 
 void _click() => TillClick.play();
-
-final _saleTime = DateFormat('HH:mm');
 
 /// Immersive EPOS Direct Sale till: cents keypad → Sale / Print / Payout / Hourly.
 /// Parallel to Sell — does not replace product scanning.
@@ -38,6 +39,8 @@ class DirectSaleScreen extends ConsumerStatefulWidget {
 class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
   /// Digits typed as the smallest currency unit (pence). `2` → 2p → £0.02; `2` then `00` → £2.00.
   String _digits = '';
+  /// Misc lines built with OK before SALE takes payment (qty defaults to 1).
+  final List<DSaleMiscLine> _cart = [];
   bool _busy = false;
   String? _flash;
   bool _flashError = false;
@@ -45,6 +48,7 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
   int _printerTick = 0;
 
   int get _pence => int.tryParse(_digits) ?? 0;
+  int get _cartTotalPence => _cart.fold(0, (a, l) => a + l.totalPence);
 
   @override
   void initState() {
@@ -99,28 +103,90 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
   }
 
   Future<void> _run(Future<DSaleResult> Function() action, {bool clearOnOk = true}) async {
-    if (_busy) return;
+    if (_busy) {
+      _flashMsg('Still finishing the last action — wait a moment', error: true);
+      return;
+    }
     setState(() => _busy = true);
     try {
-      final r = await action();
+      final session = ref.read(sessionProvider);
+      if (!session.isLoggedIn) {
+        await ref.read(sessionProvider.notifier).forceLogout(reason: 'Not signed in during Direct Sale');
+        if (mounted) _flashMsg('Session ended — sign in again', error: true);
+        return;
+      }
+      final r = await action().timeout(const Duration(seconds: 20));
       if (!mounted) return;
       _flashMsg(r.message, error: r.error || !r.ok);
       if (r.ok && clearOnOk) setState(() => _digits = '');
+    } on TimeoutException {
+      if (mounted) _flashMsg('Sale timed out — check connection, then try again', error: true);
+    } catch (e) {
+      if (mounted) _flashMsg('Could not finish: $e', error: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _sale() async {
+  /// OK on the keypad: add the typed amount as a Misc line (does not take payment).
+  void _addMiscLine() {
     _click();
     if (_pence <= 0) {
-      _flashMsg('Enter the sale total first', error: true);
+      _flashMsg('Enter an amount, then press ADD (+)', error: true);
       return;
     }
-    final due = _pence;
+    setState(() {
+      _cart.add(DSaleMiscLine(unitPence: _pence, quantity: 1));
+      _digits = '';
+      _flash = 'Added Misc ${formatPence(_cart.last.unitPence)} · total ${formatPence(_cartTotalPence)}';
+      _flashError = false;
+    });
+  }
+
+  void _bumpQty(int index, int delta) {
+    _click();
+    if (index < 0 || index >= _cart.length) return;
+    setState(() {
+      final next = (_cart[index].quantity + delta).clamp(1, 99);
+      _cart[index] = _cart[index].copyWith(quantity: next);
+    });
+  }
+
+  void _removeCartLine(int index) {
+    _click();
+    if (index < 0 || index >= _cart.length) return;
+    setState(() => _cart.removeAt(index));
+  }
+
+  void _clearCart() {
+    _click();
+    setState(() {
+      _cart.clear();
+      _digits = '';
+      _flash = 'Misc lines cleared';
+      _flashError = false;
+    });
+  }
+
+  /// SALE: take payment for all Misc lines on the cart (or the keypad amount if cart empty).
+  Future<void> _sale() async {
+    _click();
+    final lines = List<DSaleMiscLine>.from(_cart);
+    if (lines.isEmpty && _pence > 0) {
+      lines.add(DSaleMiscLine(unitPence: _pence, quantity: 1));
+    }
+    if (lines.isEmpty) {
+      _flashMsg('Add amounts with ADD (+), then press SALE', error: true);
+      return;
+    }
+    final due = lines.fold<int>(0, (a, l) => a + l.totalPence);
     final tendered = await showCashTenderDialog(context, amountDuePence: due, playClick: true);
     if (!mounted || tendered == null) return;
-    await _run(() => ref.read(dSaleServiceProvider).completeSale(due, tenderedPence: tendered));
+    await _run(() async {
+      final r = await ref.read(dSaleServiceProvider).completeSale(due, tenderedPence: tendered, lines: lines);
+      if (r.ok && mounted) setState(() => _cart.clear());
+      return r;
+    });
   }
 
   Future<void> _print() async {
@@ -135,15 +201,27 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
       return;
     }
     if (!await requirePermission(context, ref, Perm.cashMovement) || !mounted) return;
+    final amount = _pence;
+    final reason = await promptTextWithKeyboard(
+      context,
+      title: 'Payout reason / info',
+      subtitle: 'Take ${formatPence(amount)} out of the drawer — add a short note',
+      hint: 'e.g. milk, lottery, supplier',
+      allowEmpty: true,
+      confirmLabel: 'Confirm payout',
+    );
+    if (reason == null || !mounted) return;
     final ok = await confirm(
       context,
       title: 'Direct Sale payout',
-      message: 'Take ${formatPence(_pence)} out of the drawer?',
+      message: reason.isEmpty
+          ? 'Take ${formatPence(amount)} out of the drawer?'
+          : 'Take ${formatPence(amount)} out of the drawer?\n\nReason: $reason',
       confirmLabel: 'Confirm payout',
       destructive: true,
     );
     if (!ok || !mounted) return;
-    await _run(() => ref.read(dSaleServiceProvider).payout(_pence));
+    await _run(() => ref.read(dSaleServiceProvider).payout(amount, reason: reason.isEmpty ? null : reason));
   }
 
   Future<void> _hourly() async {
@@ -160,87 +238,6 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
         },
       ),
     );
-  }
-
-  Future<void> _onSaleTap(SaleRecord sale) async {
-    _click();
-    if (_busy) return;
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: const Color(0xFF1A222D),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  sale.receiptNumber,
-                  style: theme.textTheme.titleMedium?.copyWith(color: Colors.white, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${formatPence(sale.totalPence)} · ${_saleTime.format(sale.soldAt)}'
-                  '${isDirectSaleRecord(sale) ? ' · Direct Sale' : ''}',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: Colors.white70),
-                ),
-                const SizedBox(height: 16),
-                ListTile(
-                  leading: const Icon(Icons.edit_outlined, color: Colors.white),
-                  title: const Text('Edit amount', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                  subtitle: const Text('Void this sale and record a new Direct Sale', style: TextStyle(color: Colors.white54)),
-                  onTap: () => Navigator.pop(ctx, 'edit'),
-                ),
-                ListTile(
-                  leading: Icon(Icons.delete_outline, color: ZaamColors.red),
-                  title: Text('Delete / void', style: TextStyle(color: ZaamColors.red, fontWeight: FontWeight.w600)),
-                  subtitle: const Text('Cancel this sale (manager PIN if required)', style: TextStyle(color: Colors.white54)),
-                  onTap: () => Navigator.pop(ctx, 'delete'),
-                ),
-                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.white70))),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-    if (!mounted || choice == null) return;
-    if (choice == 'delete') {
-      await _deleteSale(sale);
-    } else if (choice == 'edit') {
-      await _editSale(sale);
-    }
-  }
-
-  Future<void> _deleteSale(SaleRecord sale) async {
-    if (!await requirePermission(context, ref, Perm.voidSale) || !mounted) return;
-    final reason = await promptText(
-      context,
-      title: 'Void ${sale.receiptNumber}?',
-      hint: 'Reason',
-      confirmLabel: 'Void sale',
-    );
-    if (reason == null || !mounted) return;
-    await _run(
-      () => ref.read(dSaleServiceProvider).voidSale(sale, reason: reason.isEmpty ? 'Voided via Direct Sale' : reason),
-      clearOnOk: false,
-    );
-  }
-
-  Future<void> _editSale(SaleRecord sale) async {
-    if (!await requirePermission(context, ref, Perm.voidSale) || !mounted) return;
-    final newPence = await showDialog<int>(
-      context: context,
-      builder: (ctx) => _EditAmountDialog(initialPence: sale.totalPence, receiptNumber: sale.receiptNumber),
-    );
-    if (newPence == null || !mounted) return;
-    final tendered = await showCashTenderDialog(context, amountDuePence: newPence, playClick: true);
-    if (!mounted || tendered == null) return;
-    await _run(() => ref.read(dSaleServiceProvider).editSale(sale, newPence, tenderedPence: tendered));
   }
 
   void _backToModules() {
@@ -265,12 +262,12 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
   @override
   Widget build(BuildContext context) {
     final shift = ref.watch(shiftProvider);
-    // Rebuild when local sales change so the left list + last-receipt label stay live.
+    // Rebuild when local sales change so the last-receipt label stays live.
     ref.watch(localSalesProvider);
     final settings = ref.watch(settingsProvider);
     // Keep analyzer/lints happy: tick is only used to force rebuild after reconnect.
     final _ = _printerTick;
-    final recent = ref.read(dSaleServiceProvider).recentSales(limit: 10);
+    final recent = ref.read(dSaleServiceProvider).recentSales(limit: 1);
     final lastPrintable = recent.isNotEmpty ? recent.first : null;
     final theme = Theme.of(context);
     final printer = ref.read(printerServiceProvider);
@@ -318,6 +315,39 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
             ),
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: Tooltip(
+            message: settings.openDrawerOnCash
+                ? 'Cash drawer enabled — tap to manage / test'
+                : 'Cash drawer off — tap to enable (opens via printer)',
+            child: TextButton.icon(
+              onPressed: () async {
+                _click();
+                await showCashDrawerDialog(context);
+                if (mounted) setState(() => _printerTick++);
+              },
+              icon: Icon(
+                settings.openDrawerOnCash ? Icons.inbox : Icons.inbox_outlined,
+                color: settings.openDrawerOnCash && printerReady ? ZaamColors.green : Colors.white70,
+                size: 22,
+              ),
+              label: Text(
+                settings.openDrawerOnCash ? 'Drawer' : 'Drawer off',
+                style: TextStyle(
+                  color: settings.openDrawerOnCash && printerReady ? ZaamColors.green : Colors.white70,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                minimumSize: const Size(0, 40),
+              ),
+            ),
+          ),
+        ),
         const ShellStatusActions(),
       ],
       backgroundColor: const Color(0xFF161B22),
@@ -339,6 +369,8 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
             final amountHeader = _AmountHeader(
               display: _display,
               pence: _pence,
+              cartTotalPence: _cartTotalPence,
+              cartCount: _cart.length,
               flash: _flash,
               flashError: _flashError,
               lastLabel: lastPrintable == null
@@ -346,16 +378,18 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
                   : 'Last: ${lastPrintable.receiptNumber} · ${formatPence(lastPrintable.totalPence)}',
               busy: _busy,
             );
-            final salesList = _RecentSalesList(
-              sales: recent,
+            final cartPanel = _MiscCartPanel(
+              lines: _cart,
               enabled: !_busy,
-              onTap: _onSaleTap,
+              onBumpQty: _bumpQty,
+              onRemove: _removeCartLine,
+              onClear: _cart.isEmpty ? null : _clearCart,
             );
             final pad = _Numpad(
               onDigit: _digit,
               onBack: _back,
               onClear: _clear,
-              onOk: _sale,
+              onOk: _addMiscLine,
               enabled: !_busy,
             );
             final actions = _ActionColumn(
@@ -363,6 +397,7 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
               onPrint: _busy ? null : _print,
               onPayout: _busy ? null : _payout,
               onHourly: _busy ? null : _hourly,
+              saleSub: _cart.isEmpty ? 'ADD (+) first' : 'Total ${formatPence(_cartTotalPence)}',
             );
 
             if (wide) {
@@ -378,7 +413,8 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
                         children: [
                           amountHeader,
                           const SizedBox(height: 10),
-                          Expanded(child: salesList),
+                          // Full left column for Misc — Last 5 Sales panel removed.
+                          Expanded(child: cartPanel),
                         ],
                       ),
                     ),
@@ -404,9 +440,9 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
                 children: [
                   amountHeader,
                   const SizedBox(height: 8),
-                  SizedBox(height: 160, child: salesList),
+                  Expanded(flex: 2, child: cartPanel),
                   const SizedBox(height: 8),
-                  Expanded(child: pad),
+                  Expanded(flex: 3, child: pad),
                   const SizedBox(height: 8),
                   SizedBox(height: 96, child: actions),
                 ],
@@ -423,6 +459,8 @@ class _AmountHeader extends StatelessWidget {
   const _AmountHeader({
     required this.display,
     required this.pence,
+    required this.cartTotalPence,
+    required this.cartCount,
     required this.flash,
     required this.flashError,
     required this.lastLabel,
@@ -431,6 +469,8 @@ class _AmountHeader extends StatelessWidget {
 
   final String display;
   final int pence;
+  final int cartTotalPence;
+  final int cartCount;
   final String? flash;
   final bool flashError;
   final String lastLabel;
@@ -463,7 +503,7 @@ class _AmountHeader extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(
-            'Enter total in pence — e.g. 2 then 00 for £2.00',
+            'Type amount → ADD (+ ) for Misc · SALE to take payment',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white54),
           ),
           const SizedBox(height: 10),
@@ -483,7 +523,18 @@ class _AmountHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          Text(lastLabel, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white38)),
+          Row(
+            children: [
+              Expanded(
+                child: Text(lastLabel, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white38)),
+              ),
+              if (cartCount > 0)
+                Text(
+                  'Cart ${formatPence(cartTotalPence)} · $cartCount',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: ZaamColors.gold, fontWeight: FontWeight.w700),
+                ),
+            ],
+          ),
           if (flash != null) ...[
             const SizedBox(height: 8),
             AnimatedContainer(
@@ -520,15 +571,25 @@ class _AmountHeader extends StatelessWidget {
   }
 }
 
-class _RecentSalesList extends StatelessWidget {
-  const _RecentSalesList({required this.sales, required this.enabled, required this.onTap});
+/// Pending Misc amounts before SALE (numbers + qty only — no product names).
+class _MiscCartPanel extends StatelessWidget {
+  const _MiscCartPanel({
+    required this.lines,
+    required this.enabled,
+    required this.onBumpQty,
+    required this.onRemove,
+    this.onClear,
+  });
 
-  final List<SaleRecord> sales;
+  final List<DSaleMiscLine> lines;
   final bool enabled;
-  final ValueChanged<SaleRecord> onTap;
+  final void Function(int index, int delta) onBumpQty;
+  final ValueChanged<int> onRemove;
+  final VoidCallback? onClear;
 
   @override
   Widget build(BuildContext context) {
+    final total = lines.fold(0, (a, l) => a + l.totalPence);
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF12171E),
@@ -539,74 +600,80 @@ class _RecentSalesList extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
             child: Row(
               children: [
                 Text(
-                  'LAST ${sales.isEmpty ? 10 : sales.length} SALES',
+                  'MISC ITEMS',
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: Colors.white70,
+                        color: ZaamColors.gold,
                         letterSpacing: 1.1,
                         fontWeight: FontWeight.w700,
                       ),
                 ),
                 const Spacer(),
-                Text('Tap to edit / void', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white38)),
+                if (lines.isNotEmpty)
+                  Text(
+                    formatPence(total),
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14),
+                  ),
+                if (onClear != null)
+                  IconButton(
+                    tooltip: 'Clear all',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: enabled ? onClear : null,
+                    icon: const Icon(Icons.delete_outline, color: Colors.white54, size: 20),
+                  ),
               ],
             ),
           ),
           const Divider(height: 1, color: Color(0xFF2A3340)),
           Expanded(
-            child: sales.isEmpty
+            child: lines.isEmpty
                 ? const Center(
-                    child: Text('No sales on this till yet', style: TextStyle(color: Colors.white38)),
+                    child: Text('ADD (+) puts Misc amounts here', style: TextStyle(color: Colors.white38)),
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(vertical: 4),
-                    itemCount: sales.length,
+                    itemCount: lines.length,
                     separatorBuilder: (_, _) => const Divider(height: 1, color: Color(0xFF1E2630)),
                     itemBuilder: (context, i) {
-                      final s = sales[i];
-                      final direct = isDirectSaleRecord(s);
-                      return Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: enabled ? () => onTap(s) : null,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: direct ? ZaamColors.gold : const Color(0xFF5A6A7C),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        s.receiptNumber,
-                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
-                                      ),
-                                      Text(
-                                        '${_saleTime.format(s.soldAt)}${direct ? ' · Direct' : ''}${s.staffName != null ? ' · ${s.staffName}' : ''}',
-                                        style: const TextStyle(color: Colors.white54, fontSize: 11),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Text(
-                                  formatPence(s.totalPence),
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
-                                ),
-                              ],
+                      final line = lines[i];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                formatPence(line.unitPence),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 20),
+                              ),
                             ),
-                          ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: enabled ? () => onBumpQty(i, -1) : null,
+                              icon: const Icon(Icons.remove_circle_outline, color: Colors.white54, size: 22),
+                            ),
+                            Text(
+                              '${line.quantity}',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: enabled ? () => onBumpQty(i, 1) : null,
+                              icon: const Icon(Icons.add_circle_outline, color: Colors.white70, size: 22),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              formatPence(line.totalPence),
+                              style: const TextStyle(color: ZaamColors.gold, fontWeight: FontWeight.w700, fontSize: 14),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: enabled ? () => onRemove(i) : null,
+                              icon: Icon(Icons.close, color: ZaamColors.red.withValues(alpha: 0.85), size: 18),
+                            ),
+                          ],
                         ),
                       );
                     },
@@ -641,6 +708,7 @@ class _Numpad extends StatelessWidget {
       Color? color,
       Color? fg,
       int flex = 1,
+      IconData? icon,
     }) {
       return Expanded(
         flex: flex,
@@ -653,13 +721,29 @@ class _Numpad extends StatelessWidget {
               borderRadius: BorderRadius.circular(16),
               onTap: enabled ? onTap : null,
               child: Center(
-                child: Text(
-                  label,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: fg ?? Colors.white,
-                        fontWeight: FontWeight.w700,
+                child: icon == null
+                    ? Text(
+                        label,
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                              color: fg ?? Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(icon, color: fg ?? Colors.white, size: 26),
+                          const SizedBox(width: 6),
+                          Text(
+                            label,
+                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                  color: fg ?? Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                        ],
                       ),
-                ),
               ),
             ),
           ),
@@ -706,7 +790,8 @@ class _Numpad extends StatelessWidget {
             key('7', onTap: () => onDigit('7')),
             key('8', onTap: () => onDigit('8')),
             key('9', onTap: () => onDigit('9')),
-            key('OK', onTap: onOk, color: const Color(0xFF1F8A4C)),
+            // Explicit ADD (+ icon) — adds Misc to the cart; SALE still takes payment.
+            key('ADD', onTap: onOk, color: const Color(0xFF1F8A4C), icon: Icons.add),
           ]),
           row([
             key('0', onTap: () => onDigit('0')),
@@ -725,12 +810,14 @@ class _ActionColumn extends StatelessWidget {
     required this.onPrint,
     required this.onPayout,
     required this.onHourly,
+    this.saleSub = 'No auto-print',
   });
 
   final VoidCallback? onSale;
   final VoidCallback? onPrint;
   final VoidCallback? onPayout;
   final VoidCallback? onHourly;
+  final String saleSub;
 
   @override
   Widget build(BuildContext context) {
@@ -778,114 +865,10 @@ class _ActionColumn extends StatelessWidget {
 
     return Row(
       children: [
-        action(label: 'SALE', sub: 'No auto-print', color: const Color(0xFF1F8A4C), onTap: onSale, icon: Icons.shopping_bag_outlined),
+        action(label: 'SALE', sub: saleSub, color: const Color(0xFF1F8A4C), onTap: onSale, icon: Icons.shopping_bag_outlined),
         action(label: 'PRINT', sub: 'Last receipt', color: const Color(0xFF2F6FED), onTap: onPrint, icon: Icons.print_outlined),
-        action(label: 'PAYOUT', sub: 'Print slip', color: const Color(0xFFC43C5A), onTap: onPayout, icon: Icons.outbox_outlined),
+        action(label: 'PAYOUT', sub: 'Reason + slip', color: const Color(0xFFC43C5A), onTap: onPayout, icon: Icons.outbox_outlined),
         action(label: 'HOURLY', sub: 'Early report', color: const Color(0xFFB8860B), onTap: onHourly, icon: Icons.schedule_outlined),
-      ],
-    );
-  }
-}
-
-class _EditAmountDialog extends StatefulWidget {
-  const _EditAmountDialog({required this.initialPence, required this.receiptNumber});
-
-  final int initialPence;
-  final String receiptNumber;
-
-  @override
-  State<_EditAmountDialog> createState() => _EditAmountDialogState();
-}
-
-class _EditAmountDialogState extends State<_EditAmountDialog> {
-  late String _digits;
-
-  @override
-  void initState() {
-    super.initState();
-    _digits = widget.initialPence > 0 ? '${widget.initialPence}' : '';
-  }
-
-  int get _pence => int.tryParse(_digits) ?? 0;
-  String get _display => (_pence / 100).toStringAsFixed(2);
-
-  void _digit(String d) {
-    _click();
-    setState(() {
-      final next = '$_digits$d';
-      if (next.length > 9) return;
-      _digits = next.replaceFirst(RegExp(r'^0+(?=\d)'), '');
-      if (_digits.isEmpty && (d == '0' || d == '00')) _digits = '0';
-    });
-  }
-
-  void _back() {
-    _click();
-    setState(() {
-      if (_digits.isEmpty) return;
-      _digits = _digits.substring(0, _digits.length - 1);
-    });
-  }
-
-  void _clear() {
-    _click();
-    setState(() => _digits = '');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    Widget key(String label, {VoidCallback? onTap, Color? color, int flex = 1}) {
-      return Expanded(
-        flex: flex,
-        child: Padding(
-          padding: const EdgeInsets.all(3),
-          child: Material(
-            color: color ?? const Color(0xFF243041),
-            borderRadius: BorderRadius.circular(12),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: onTap,
-              child: SizedBox(
-                height: 52,
-                child: Center(
-                  child: Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return AlertDialog(
-      backgroundColor: const Color(0xFF1A222D),
-      title: Text('Edit ${widget.receiptNumber}', style: const TextStyle(color: Colors.white)),
-      content: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: Text(
-                '£$_display',
-                style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()]),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(children: [key('1', onTap: () => _digit('1')), key('2', onTap: () => _digit('2')), key('3', onTap: () => _digit('3')), key('C', onTap: _clear, color: const Color(0xFF3A4A5C))]),
-            Row(children: [key('4', onTap: () => _digit('4')), key('5', onTap: () => _digit('5')), key('6', onTap: () => _digit('6')), key('⌫', onTap: _back, color: const Color(0xFF3A4A5C))]),
-            Row(children: [key('7', onTap: () => _digit('7')), key('8', onTap: () => _digit('8')), key('9', onTap: () => _digit('9')), key('00', onTap: () => _digit('00'))]),
-            Row(children: [key('0', onTap: () => _digit('0'), flex: 3), const Expanded(child: SizedBox())]),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: _pence <= 0 ? null : () => Navigator.pop(context, _pence),
-          child: const Text('Save amount'),
-        ),
       ],
     );
   }

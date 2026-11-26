@@ -13,7 +13,11 @@ class AppLog {
     final line = '${DateTime.now().toIso8601String()} [$level] $message';
     _lines.add(line);
     if (_lines.length > _max) _lines.removeRange(0, _lines.length - _max);
-    if (kDebugMode) debugPrint(line);
+    // Always mirror to the browser console on web (release PWA builds used to be silent).
+    if (kDebugMode || kIsWeb) {
+      // ignore: avoid_print
+      print(line);
+    }
   }
 
   static List<String> get lines => List.unmodifiable(_lines);

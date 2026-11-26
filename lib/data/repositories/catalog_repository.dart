@@ -984,6 +984,8 @@ class CatalogController extends Notifier<CatalogState> {
   }
 
   /// Server-side lookup for codes not in the local cache (e.g. a barcode added moments ago).
+  /// Throws [ApiException] when the API returns a specific miss reason (e.g. not stocked
+  /// at this register warehouse) so the sell screen can show a clear message.
   Future<Product?> lookupRemote(String code) async {
     try {
       final session = ref.read(sessionProvider);
@@ -992,8 +994,11 @@ class CatalogController extends Notifier<CatalogState> {
         'registerId': session.registerId,
       }) as Map);
       final id = '${res['variantId']}';
+      if (id.isEmpty || id == 'null') return null;
       if (!state.products.containsKey(id)) await sync();
       return state.products[id];
+    } on ApiException {
+      rethrow;
     } catch (_) {
       return null;
     }

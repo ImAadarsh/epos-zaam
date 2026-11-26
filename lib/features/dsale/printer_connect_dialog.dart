@@ -254,6 +254,20 @@ class _PrinterConnectPanelState extends ConsumerState<_PrinterConnectPanel> {
             }
           },
         ),
+        if (s.printerType == PrinterType.usb || s.printerType == PrinterType.network)
+          ListTile(
+            leading: const Icon(Icons.inbox_outlined),
+            title: const Text('Test open drawer'),
+            subtitle: const Text('Please connect the drawer to the printer DK (RJ11) port.'),
+            onTap: () async {
+              try {
+                await ref.read(printerServiceProvider).openDrawer();
+                if (context.mounted) showMessage(context, 'Drawer kick sent — drawer should open');
+              } catch (e) {
+                if (context.mounted) showMessage(context, '$e', error: true);
+              }
+            },
+          ),
       ],
     );
   }

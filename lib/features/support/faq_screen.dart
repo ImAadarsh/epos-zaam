@@ -18,6 +18,8 @@ class FaqScreen extends StatelessWidget {
         'Refunds, voids, large discounts, cash in/out, closing the register and settings need a supervisor or manager. Roles and PINs are set in Settings → Staff PINs.'),
     ('How do I connect a receipt printer?',
         'Settings → Printer. Network ESC/POS printers (Epson TM, Star, Xprinter…) need the printer IP address; the cash drawer plugs into the printer. "System print dialog" works with AirPrint and desktop printers, and on the web.'),
+    ('How does the cash drawer open?',
+        'Connect the drawer to the printer DK (RJ11) port. In Settings → Cash drawer turn on “Open drawer on cash sales”, then use Test open drawer. Cash sales, Direct Sale, Pay in/out, Cash drop and No sale send the kick when that setting is on.'),
     ('How do I take card payments?',
         'With any standalone terminal: charge the amount on the terminal and tap Approved. With SumUp Solo: add your SumUp API key, merchant code and reader ID in Settings → Payment and the amount is sent to the reader automatically.'),
     ('Where do products and prices come from?',

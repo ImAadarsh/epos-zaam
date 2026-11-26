@@ -27,6 +27,19 @@ class DSaleResult {
   final bool error;
 }
 
+/// One Misc line on the Direct Sale cart (amount × qty before payment).
+class DSaleMiscLine {
+  const DSaleMiscLine({required this.unitPence, this.quantity = 1});
+
+  final int unitPence;
+  final int quantity;
+
+  int get totalPence => unitPence * quantity;
+
+  DSaleMiscLine copyWith({int? unitPence, int? quantity}) =>
+      DSaleMiscLine(unitPence: unitPence ?? this.unitPence, quantity: quantity ?? this.quantity);
+}
+
 class HourlyBucket {
   const HourlyBucket({required this.hour, required this.label, required this.amountPence, required this.salesCount, required this.percent});
 
@@ -69,29 +82,55 @@ class DSaleService {
   DSaleService(this.ref);
   final Ref ref;
 
-  /// Cash misc sale for [amountPence]. Stays on the Direct Sale screen.
+  /// Cash misc sale. Pass either a single [amountPence] or one-or-more [lines]
+  /// built on the Direct Sale cart (OK adds lines; SALE takes payment).
   /// Never auto-prints — Print button reprints the last receipt explicitly.
   ///
   /// [tenderedPence] is what the customer handed over (must be >= amount). Change
   /// is recorded as tendered − amount. Defaults to exact amount when omitted.
-  Future<DSaleResult> completeSale(int amountPence, {int? tenderedPence}) async {
-    if (amountPence <= 0) {
-      return const DSaleResult(ok: false, message: 'Enter an amount greater than zero', error: true);
+  Future<DSaleResult> completeSale(int amountPence, {int? tenderedPence, List<DSaleMiscLine>? lines}) async {
+    final miscLines = (lines == null || lines.isEmpty)
+        ? (amountPence > 0 ? [DSaleMiscLine(unitPence: amountPence)] : const <DSaleMiscLine>[])
+        : lines.where((l) => l.unitPence > 0 && l.quantity > 0).toList();
+    final total = miscLines.fold<int>(0, (a, l) => a + l.totalPence);
+    if (total <= 0) {
+      return const DSaleResult(ok: false, message: 'Add at least one Misc amount first', error: true);
     }
-    final tendered = tenderedPence ?? amountPence;
-    if (tendered < amountPence) {
+    final tendered = tenderedPence ?? total;
+    if (tendered < total) {
       return const DSaleResult(ok: false, message: 'Cash tendered is less than the amount due', error: true);
     }
-    final change = tendered - amountPence;
+    final change = tendered - total;
     final shift = ref.read(shiftProvider);
     if (shift == null) {
       return const DSaleResult(ok: false, message: 'Open the register before taking a sale', error: true);
     }
 
     final session = ref.read(sessionProvider);
+    if (!session.isLoggedIn) {
+      await ref.read(sessionProvider.notifier).forceLogout(reason: 'Not signed in during Direct Sale');
+      return const DSaleResult(ok: false, message: 'Session ended — sign in again', error: true);
+    }
     final register = ref.read(currentRegisterProvider);
     final staff = ref.read(currentStaffProvider);
     final settings = ref.read(settingsProvider);
+
+    final saleLines = <SaleLine>[
+      for (final l in miscLines)
+        SaleLine(
+          variantId: '',
+          sku: 'MISC',
+          name: 'Miscellaneous sale',
+          quantity: l.quantity,
+          unitPence: l.unitPence,
+          discountPence: 0,
+          taxRate: 0,
+          taxPence: 0,
+          totalPence: l.totalPence,
+          note: 'Direct Sale',
+          category: 'Direct Sale',
+        ),
+    ];
 
     final sale = SaleRecord(
       clientId: newId(),
@@ -105,45 +144,40 @@ class DSaleService {
       deviceId: session.deviceId,
       soldAt: DateTime.now(),
       saleType: 'instore',
-      subtotalPence: amountPence,
+      subtotalPence: total,
       discountPence: 0,
       taxPence: 0,
-      totalPence: amountPence,
+      totalPence: total,
       tipPence: 0,
       changePence: change,
       notes: 'EPOS Direct Sale',
-      lines: [
-        SaleLine(
-          variantId: '',
-          sku: 'MISC',
-          name: 'Miscellaneous sale',
-          quantity: 1,
-          unitPence: amountPence,
-          discountPence: 0,
-          taxRate: 0,
-          taxPence: 0,
-          totalPence: amountPence,
-          note: 'Direct Sale',
-          category: 'Direct Sale',
-        ),
-      ],
+      lines: saleLines,
       payments: [
-        SalePayment(method: PaymentMethod.cash, amountPence: amountPence, tenderedPence: tendered),
+        SalePayment(method: PaymentMethod.cash, amountPence: total, tenderedPence: tendered),
       ],
     );
 
     await ref.read(localSalesProvider.notifier).add(sale);
-    AppLog.info('Direct Sale ${sale.receiptNumber} ${sale.totalPence}p completed (tendered ${tendered}p change ${change}p)');
+    AppLog.info(
+      'Direct Sale ${sale.receiptNumber} ${sale.totalPence}p · ${saleLines.length} misc line(s) '
+      '(tendered ${tendered}p change ${change}p)',
+    );
 
+    String drawerNote = '';
     if (settings.openDrawerOnCash) {
-      ref.read(printerServiceProvider).openDrawer().catchError((Object e) => AppLog.warn('Drawer: $e'));
+      final drawerErr = await ref.read(printerServiceProvider).tryOpenDrawer();
+      if (drawerErr != null) {
+        drawerNote = ' · drawer did not open: $drawerErr';
+      }
     }
 
     final changeNote = change > 0 ? ' · change £${(change / 100).toStringAsFixed(2)}' : '';
+    final linesNote = saleLines.length > 1 ? ' · ${saleLines.length} items' : '';
     return DSaleResult(
       ok: true,
-      message: 'Sale ${sale.receiptNumber} · £${(amountPence / 100).toStringAsFixed(2)} recorded$changeNote',
+      message: 'Sale ${sale.receiptNumber} · £${(total / 100).toStringAsFixed(2)} recorded$linesNote$changeNote$drawerNote',
       sale: sale,
+      error: drawerNote.isNotEmpty,
     );
   }
 
@@ -199,8 +233,20 @@ class DSaleService {
       return const DSaleResult(ok: false, message: 'No printer configured. Open Settings → Printer.', error: true);
     }
     try {
+      final cash = sale.payments.any((p) => p.method == PaymentMethod.cash);
+      // Original print path skips drawer on copies — still kick when the till setting is on
+      // so Print after a cash Direct Sale opens the drawer (USB/network ESC/POS only).
       await ref.read(checkoutServiceProvider).printReceipt(sale, copy: true);
-      return DSaleResult(ok: true, message: 'Reprinted ${sale.receiptNumber}');
+      String drawerNote = '';
+      if (settings.openDrawerOnCash && cash) {
+        final drawerErr = await ref.read(printerServiceProvider).tryOpenDrawer();
+        if (drawerErr != null) drawerNote = ' · drawer did not open: $drawerErr';
+      }
+      return DSaleResult(
+        ok: true,
+        message: 'Reprinted ${sale.receiptNumber}$drawerNote',
+        error: drawerNote.isNotEmpty,
+      );
     } catch (e) {
       AppLog.warn('Direct Sale reprint failed: $e');
       return DSaleResult(ok: false, message: 'Could not print: $e', error: true);

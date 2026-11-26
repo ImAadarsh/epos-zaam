@@ -262,6 +262,35 @@ class SettingsScreen extends ConsumerWidget {
                   },
                 ),
               ]),
+              header('Cash drawer'),
+              card([
+                toggle('Open drawer on cash sales', s.openDrawerOnCash, (v) => set((x) => x.copyWith(openDrawerOnCash: v))),
+                ListTile(
+                  leading: const Icon(Icons.inbox),
+                  title: const Text('Test open drawer'),
+                  subtitle: Text(
+                    (s.printerType == PrinterType.usb || s.printerType == PrinterType.network)
+                        ? 'Send a kick now — drawer should open'
+                        : 'Set Printer to USB or Network ESC/POS first',
+                  ),
+                  enabled: s.printerType == PrinterType.usb || s.printerType == PrinterType.network,
+                  onTap: (s.printerType != PrinterType.usb && s.printerType != PrinterType.network)
+                      ? null
+                      : () async {
+                          try {
+                            await ref.read(printerServiceProvider).openDrawer();
+                            if (context.mounted) showMessage(context, 'Drawer kick sent — drawer should open');
+                          } catch (e) {
+                            if (context.mounted) showMessage(context, '$e', error: true);
+                          }
+                        },
+                ),
+                const ListTile(
+                  leading: Icon(Icons.info_outline),
+                  title: Text('How to connect'),
+                  subtitle: Text('Please connect the drawer to the printer DK (RJ11) port.'),
+                ),
+              ]),
               header('Barcode scanner'),
               card([
                 const ListTile(
