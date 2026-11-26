@@ -893,7 +893,7 @@ class _Numpad extends StatelessWidget {
                               Icon(icon, color: fg ?? Colors.white, size: 24),
                               const SizedBox(height: 4),
                               const Text(
-                                'ARCHIVE',
+                                'HOLD',
                                 style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: 0.3),
                               ),
                               Text('SALE', style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontWeight: FontWeight.w700, fontSize: 11)),
@@ -966,7 +966,7 @@ class _Numpad extends StatelessWidget {
           row([
             key('0', onTap: () => onDigit('0')),
             key('00', onTap: () => onDigit('00'), flex: 2),
-            key('ARCHIVE', onTap: onArchive, color: const Color(0xFF7A4FD1), icon: Icons.inventory_2_outlined, small: true),
+            key('HOLD', onTap: onArchive, color: const Color(0xFF7A4FD1), icon: Icons.inventory_2_outlined, small: true),
           ]),
         ],
       ),
