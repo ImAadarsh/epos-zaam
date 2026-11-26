@@ -22,6 +22,7 @@ import '../shell/app_shell.dart';
 import '../shell/status_bar.dart';
 import '../sell/widgets/cash_notes.dart';
 import 'cash_drawer_dialog.dart';
+import 'dsale_archive.dart';
 import 'dsale_service.dart';
 import 'printer_connect_dialog.dart';
 
@@ -168,6 +169,61 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
     });
   }
 
+  /// ARCHIVE SALE: set the current Misc cart aside (unpaid) so it can be reloaded later.
+  Future<void> _archiveSale() async {
+    _click();
+    final lines = List<DSaleMiscLine>.from(_cart);
+    if (lines.isEmpty && _pence > 0) {
+      lines.add(DSaleMiscLine(unitPence: _pence, quantity: 1));
+    }
+    if (lines.isEmpty) {
+      _flashMsg('Nothing to archive — add amounts with ADD (+) first', error: true);
+      return;
+    }
+    final total = lines.fold<int>(0, (a, l) => a + l.totalPence);
+    await ref.read(dSaleArchiveProvider.notifier).archive(lines);
+    if (!mounted) return;
+    setState(() {
+      _cart.clear();
+      _digits = '';
+      _flash = 'Sale archived · ${formatPence(total)}';
+      _flashError = false;
+    });
+  }
+
+  /// Reload an archived sale onto the till. A cart already in progress is archived (not lost).
+  Future<void> _restoreArchived(ArchivedDSale sale) async {
+    _click();
+    final notifier = ref.read(dSaleArchiveProvider.notifier);
+    final current = List<DSaleMiscLine>.from(_cart);
+    await notifier.remove(sale.id);
+    if (current.isNotEmpty) await notifier.archive(current);
+    if (!mounted) return;
+    setState(() {
+      _cart
+        ..clear()
+        ..addAll(sale.lines);
+      _digits = '';
+      _flash = current.isEmpty
+          ? 'Archived sale reloaded · ${formatPence(sale.totalPence)}'
+          : 'Archived sale reloaded · previous cart archived';
+      _flashError = false;
+    });
+  }
+
+  Future<void> _discardArchived(ArchivedDSale sale) async {
+    _click();
+    final ok = await confirm(
+      context,
+      title: 'Discard archived sale?',
+      message: 'Delete the archived ${formatPence(sale.totalPence)} sale (${sale.itemCount} item${sale.itemCount == 1 ? '' : 's'})? This cannot be undone.',
+      confirmLabel: 'Discard',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    await ref.read(dSaleArchiveProvider.notifier).remove(sale.id);
+  }
+
   /// SALE: take payment for all Misc lines on the cart (or the keypad amount if cart empty).
   Future<void> _sale() async {
     _click();
@@ -265,6 +321,7 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
     // Rebuild when local sales change so the last-receipt label stays live.
     ref.watch(localSalesProvider);
     final settings = ref.watch(settingsProvider);
+    final archived = ref.watch(dSaleArchiveProvider);
     // Keep analyzer/lints happy: tick is only used to force rebuild after reconnect.
     final _ = _printerTick;
     final recent = ref.read(dSaleServiceProvider).recentSales(limit: 1);
@@ -390,8 +447,12 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
               onBack: _back,
               onClear: _clear,
               onOk: _addMiscLine,
+              onArchive: _archiveSale,
               enabled: !_busy,
             );
+            final archivePanel = archived.isEmpty
+                ? null
+                : _ArchivePanel(sales: archived, enabled: !_busy, onRestore: _restoreArchived, onDiscard: _discardArchived);
             final actions = _ActionColumn(
               onSale: _busy ? null : _sale,
               onPrint: _busy ? null : _print,
@@ -415,6 +476,11 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
                           const SizedBox(height: 10),
                           // Full left column for Misc — Last 5 Sales panel removed.
                           Expanded(child: cartPanel),
+                          // Only visible once at least one sale is archived.
+                          if (archivePanel != null) ...[
+                            const SizedBox(height: 10),
+                            SizedBox(height: 140, child: archivePanel),
+                          ],
                         ],
                       ),
                     ),
@@ -441,6 +507,10 @@ class _DirectSaleScreenState extends ConsumerState<DirectSaleScreen> {
                   amountHeader,
                   const SizedBox(height: 8),
                   Expanded(flex: 2, child: cartPanel),
+                  if (archivePanel != null) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(height: 110, child: archivePanel),
+                  ],
                   const SizedBox(height: 8),
                   Expanded(flex: 3, child: pad),
                   const SizedBox(height: 8),
@@ -685,12 +755,96 @@ class _MiscCartPanel extends StatelessWidget {
   }
 }
 
+/// Archived (unpaid) sales. Shown on the left only while at least one exists.
+class _ArchivePanel extends StatelessWidget {
+  const _ArchivePanel({required this.sales, required this.enabled, required this.onRestore, required this.onDiscard});
+
+  final List<ArchivedDSale> sales;
+  final bool enabled;
+  final ValueChanged<ArchivedDSale> onRestore;
+  final ValueChanged<ArchivedDSale> onDiscard;
+
+  static const _purple = Color(0xFFB79CFF);
+
+  String _time(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF12171E),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF7A4FD1).withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+            child: Row(
+              children: [
+                const Icon(Icons.inventory_2_outlined, size: 16, color: _purple),
+                const SizedBox(width: 6),
+                Text(
+                  'ARCHIVED SALES',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(color: _purple, letterSpacing: 1.1, fontWeight: FontWeight.w700),
+                ),
+                const Spacer(),
+                Text('${sales.length}', style: const TextStyle(color: _purple, fontWeight: FontWeight.w800)),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFF2A3340)),
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              itemCount: sales.length,
+              separatorBuilder: (_, _) => const Divider(height: 1, color: Color(0xFF1E2630)),
+              itemBuilder: (context, i) {
+                final s = sales[i];
+                return InkWell(
+                  onTap: enabled ? () => onRestore(s) : null,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 4, 4, 4),
+                    child: Row(
+                      children: [
+                        Text(_time(s.archivedAt), style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '${s.itemCount} item${s.itemCount == 1 ? '' : 's'}',
+                            style: const TextStyle(color: Colors.white70, fontSize: 13),
+                          ),
+                        ),
+                        Text(formatPence(s.totalPence), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.restore, size: 18, color: _purple),
+                        IconButton(
+                          tooltip: 'Discard',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: enabled ? () => onDiscard(s) : null,
+                          icon: Icon(Icons.close, color: ZaamColors.red.withValues(alpha: 0.85), size: 18),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Numpad extends StatelessWidget {
   const _Numpad({
     required this.onDigit,
     required this.onBack,
     required this.onClear,
     required this.onOk,
+    required this.onArchive,
     required this.enabled,
   });
 
@@ -698,6 +852,7 @@ class _Numpad extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onClear;
   final VoidCallback onOk;
+  final VoidCallback onArchive;
   final bool enabled;
 
   @override
@@ -709,6 +864,7 @@ class _Numpad extends StatelessWidget {
       Color? fg,
       int flex = 1,
       IconData? icon,
+      bool small = false,
     }) {
       return Expanded(
         flex: flex,
@@ -729,21 +885,35 @@ class _Numpad extends StatelessWidget {
                               fontWeight: FontWeight.w700,
                             ),
                       )
-                    : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(icon, color: fg ?? Colors.white, size: 26),
-                          const SizedBox(width: 6),
-                          Text(
-                            label,
-                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                  color: fg ?? Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                ),
+                    : small
+                        ? Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(icon, color: fg ?? Colors.white, size: 24),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'ARCHIVE',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: 0.3),
+                              ),
+                              Text('SALE', style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontWeight: FontWeight.w700, fontSize: 11)),
+                            ],
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(icon, color: fg ?? Colors.white, size: 26),
+                              const SizedBox(width: 6),
+                              Text(
+                                label,
+                                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                      color: fg ?? Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
               ),
             ),
           ),
@@ -796,7 +966,7 @@ class _Numpad extends StatelessWidget {
           row([
             key('0', onTap: () => onDigit('0')),
             key('00', onTap: () => onDigit('00'), flex: 2),
-            const Expanded(child: SizedBox()),
+            key('ARCHIVE', onTap: onArchive, color: const Color(0xFF7A4FD1), icon: Icons.inventory_2_outlined, small: true),
           ]),
         ],
       ),
